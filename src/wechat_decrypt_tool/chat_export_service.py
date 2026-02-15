@@ -541,6 +541,11 @@ body { background: #EDEDED; }
 .wce-chat-title { font-size: 16px; font-weight: 500; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wce-filter-select { font-size: 12px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: #374151; }
 .wce-message-container { flex: 1; overflow: auto; padding: 16px; min-height: 0; }
+.wce-pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 0 12px; }
+.wce-pager-btn { font-size: 12px; padding: 6px 10px; border-radius: 8px; border: 1px solid #e5e7eb; background: #fff; color: #374151; cursor: pointer; }
+.wce-pager-btn:hover { background: #f9fafb; }
+.wce-pager-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.wce-pager-status { font-size: 12px; color: #6b7280; }
 
 /* Single session item (middle column). */
 .wce-session-item { display: flex; align-items: center; gap: 12px; padding: 0 12px; height: 80px; border-bottom: 1px solid #f3f4f6; background: #DEDEDE; text-decoration: none; color: inherit; }
@@ -838,6 +843,140 @@ _HTML_EXPORT_JS = r"""
     return obj
   }
 
+  const readPageMeta = () => {
+    const el = document.getElementById('wcePageMeta')
+    const obj = safeJsonParse(el ? el.textContent : '')
+    if (!obj || typeof obj !== 'object') return null
+    return obj
+  }
+
+  const initPagedMessageLoading = () => {
+    const meta = readPageMeta()
+    if (!meta) return
+
+    const totalPages = Number(meta.totalPages || 0)
+    if (!Number.isFinite(totalPages) || totalPages <= 1) return
+
+    const initialPage = Number(meta.initialPage || totalPages || 1)
+    const padWidth = Number(meta.padWidth || 0) || 0
+    const prefix = String(meta.pageFilePrefix || 'pages/page-')
+    const suffix = String(meta.pageFileSuffix || '.js')
+
+    const container = document.getElementById('messageContainer')
+    const list = document.getElementById('wceMessageList') || container
+    const pager = document.getElementById('wcePager')
+    const btn = document.getElementById('wceLoadPrevBtn')
+    const status = document.getElementById('wceLoadPrevStatus')
+    if (!container || !list || !pager || !btn) return
+
+    try { pager.style.display = '' } catch {}
+
+    const loaded = new Set()
+    loaded.add(initialPage)
+    let nextPage = initialPage - 1
+    let loading = false
+
+    const setStatus = (text) => {
+      try { if (status) status.textContent = String(text || '') } catch {}
+    }
+
+    const updateUi = (overrideText) => {
+      if (overrideText != null) {
+        setStatus(overrideText)
+        try { btn.disabled = false } catch {}
+        return
+      }
+      if (nextPage < 1) {
+        setStatus('已到底')
+        try { btn.disabled = true } catch {}
+        return
+      }
+      if (loading) {
+        setStatus('加载中...')
+        try { btn.disabled = true } catch {}
+        return
+      }
+      setStatus('点击加载更早消息')
+      try { btn.disabled = false } catch {}
+    }
+
+    const pageSrc = (n) => {
+      const num = padWidth > 0 ? String(n).padStart(padWidth, '0') : String(n)
+      return prefix + num + suffix
+    }
+
+    window.__WCE_PAGE_QUEUE__ = window.__WCE_PAGE_QUEUE__ || []
+    window.__WCE_PAGE_LOADED__ = (pageNo, html) => {
+      const n = Number(pageNo)
+      if (!Number.isFinite(n) || n < 1) return
+      if (loaded.has(n)) return
+      loaded.add(n)
+
+      try {
+        const prevH = container.scrollHeight
+        const prevTop = container.scrollTop
+        list.insertAdjacentHTML('afterbegin', String(html || ''))
+        const newH = container.scrollHeight
+        container.scrollTop = prevTop + (newH - prevH)
+      } catch {
+        try { list.insertAdjacentHTML('afterbegin', String(html || '')) } catch {}
+      }
+
+      loading = false
+      nextPage = n - 1
+      try { applyMessageTypeFilter() } catch {}
+      try { updateSessionMessageCount() } catch {}
+      updateUi()
+    }
+
+    // Flush any queued pages (should be rare, but keeps behavior robust).
+    try {
+      const q = window.__WCE_PAGE_QUEUE__
+      if (Array.isArray(q) && q.length) {
+        const items = q.slice(0)
+        q.length = 0
+        items.forEach((it) => {
+          try {
+            if (it && it.length >= 2) window.__WCE_PAGE_LOADED__(it[0], it[1])
+          } catch {}
+        })
+      }
+    } catch {}
+
+    const requestLoad = () => {
+      if (loading) return
+      if (nextPage < 1) return
+      const n = nextPage
+
+      loading = true
+      updateUi()
+
+      const s = document.createElement('script')
+      s.async = true
+      s.src = pageSrc(n)
+      s.onerror = () => {
+        loading = false
+        updateUi('加载失败，可重试')
+      }
+      try { document.body.appendChild(s) } catch {
+        loading = false
+        updateUi('加载失败，可重试')
+      }
+    }
+
+    btn.addEventListener('click', () => requestLoad())
+
+    let lastScrollAt = 0
+    container.addEventListener('scroll', () => {
+      const now = Date.now()
+      if (now - lastScrollAt < 200) return
+      lastScrollAt = now
+      if (container.scrollTop < 120) requestLoad()
+    })
+
+    updateUi()
+  }
+
   const isMaybeMd5 = (value) => /^[0-9a-f]{32}$/i.test(String(value || '').trim())
   const pickFirstMd5 = (...values) => {
     for (const v of values) {
@@ -926,11 +1065,58 @@ _HTML_EXPORT_JS = r"""
 
     const getText = (node, tag) => {
       try {
-        const el = node.getElementsByTagName(tag)?.[0]
+        if (!node) return ''
+        const els = Array.from(node.getElementsByTagName(tag) || [])
+        const direct = els.find((el) => el && el.parentNode === node)
+        const el = direct || els[0]
         return String(el?.textContent || '').trim()
       } catch {
         return ''
       }
+    }
+
+    const getDirectChildXml = (node, tag) => {
+      try {
+        if (!node) return ''
+        const children = Array.from(node.children || [])
+        const el = children.find((c) => String(c?.tagName || '').toLowerCase() === String(tag || '').toLowerCase())
+        if (!el) return ''
+
+        const raw = String(el.textContent || '').trim()
+        if (raw && raw.startsWith('<') && raw.endsWith('>')) return raw
+
+        if (typeof XMLSerializer !== 'undefined') {
+          return new XMLSerializer().serializeToString(el)
+        }
+      } catch {}
+      return ''
+    }
+
+    const getAnyXml = (node, tag) => {
+      try {
+        if (!node) return ''
+        const els = Array.from(node.getElementsByTagName(tag) || [])
+        const direct = els.find((el) => el && el.parentNode === node)
+        const el = direct || els[0]
+        if (!el) return ''
+
+        const raw = String(el.textContent || '').trim()
+        if (raw && raw.startsWith('<') && raw.endsWith('>')) return raw
+        if (typeof XMLSerializer !== 'undefined') return new XMLSerializer().serializeToString(el)
+      } catch {}
+      return ''
+    }
+
+    const sameTag = (el, tag) => String(el?.tagName || '').toLowerCase() === String(tag || '').toLowerCase()
+
+    const closestAncestorByTag = (node, tag) => {
+      const lower = String(tag || '').toLowerCase()
+      let cur = node
+      while (cur) {
+        if (cur.nodeType === 1 && String(cur.tagName || '').toLowerCase() === lower) return cur
+        cur = cur.parentNode
+      }
+      return null
     }
 
     const root = doc?.documentElement
@@ -938,16 +1124,31 @@ _HTML_EXPORT_JS = r"""
     const title = getText(root, 'title')
     const desc = getText(root, 'desc') || getText(root, 'info')
 
-    const items = Array.from(doc.getElementsByTagName('dataitem') || [])
-    const parsed = items.map((node, idx) => {
-      const datatype = String(node.getAttribute('datatype') || '').trim()
-      const dataid = String(node.getAttribute('dataid') || '').trim() || String(idx)
+    const datalist = (() => {
+      try {
+        const all = Array.from(doc.getElementsByTagName('datalist') || [])
+        const top = root ? all.find((el) => closestAncestorByTag(el, 'recorditem') === root) : null
+        return top || all[0] || null
+      } catch {
+        return null
+      }
+    })()
+
+    const itemNodes = (() => {
+      if (datalist) return Array.from(datalist.children || []).filter((el) => sameTag(el, 'dataitem'))
+      return Array.from(root?.children || []).filter((el) => sameTag(el, 'dataitem'))
+    })()
+
+    const parsed = itemNodes.map((node, idx) => {
+      const datatype = String(node.getAttribute('datatype') || getText(node, 'datatype') || '').trim()
+      const dataid = String(node.getAttribute('dataid') || getText(node, 'dataid') || '').trim() || String(idx)
 
       const sourcename = getText(node, 'sourcename')
       const sourcetime = getText(node, 'sourcetime')
       const sourceheadurl = normalizeChatHistoryUrl(getText(node, 'sourceheadurl'))
       const datatitle = getText(node, 'datatitle')
       const datadesc = getText(node, 'datadesc')
+      const link = normalizeChatHistoryUrl(getText(node, 'link') || getText(node, 'dataurl') || getText(node, 'url'))
       const datafmt = getText(node, 'datafmt')
       const duration = getText(node, 'duration')
 
@@ -961,6 +1162,7 @@ _HTML_EXPORT_JS = r"""
       const fromnewmsgid = getText(node, 'fromnewmsgid')
       const srcMsgLocalid = getText(node, 'srcMsgLocalid')
       const srcMsgCreateTime = getText(node, 'srcMsgCreateTime')
+      const nestedRecordItem = getAnyXml(node, 'recorditem') || getDirectChildXml(node, 'recorditem') || getText(node, 'recorditem')
 
       let content = datatitle || datadesc
       if (!content) {
@@ -975,7 +1177,11 @@ _HTML_EXPORT_JS = r"""
       const imageFormats = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'])
 
       let renderType = 'text'
-      if (datatype === '4' || String(duration || '').trim() || fmt === 'mp4') {
+      if (datatype === '17') {
+        renderType = 'chatHistory'
+      } else if (datatype === '5' || link) {
+        renderType = 'link'
+      } else if (datatype === '4' || String(duration || '').trim() || fmt === 'mp4') {
         renderType = 'video'
       } else if (datatype === '47' || datatype === '37') {
         renderType = 'emoji'
@@ -988,6 +1194,23 @@ _HTML_EXPORT_JS = r"""
         renderType = 'image'
       } else if (isMaybeMd5(md5) && /表情/.test(String(content || ''))) {
         renderType = 'emoji'
+      }
+
+      let outTitle = ''
+      let outUrl = ''
+      let recordItem = ''
+      if (renderType === 'chatHistory') {
+        outTitle = datatitle || content || '聊天记录'
+        content = datadesc || ''
+        recordItem = nestedRecordItem
+      } else if (renderType === 'link') {
+        outTitle = datatitle || content || ''
+        outUrl = link || externurl || ''
+        // datadesc can be an invisible filler; only keep as description when meaningful.
+        const cleanDesc = String(datadesc || '').replace(/[\\u3164\\u2800]/g, '').trim()
+        const cleanTitle = String(outTitle || '').replace(/[\\u3164\\u2800]/g, '').trim()
+        if (!cleanDesc || (cleanTitle && cleanDesc === cleanTitle)) content = ''
+        else content = String(datadesc || '').trim()
       }
 
       return {
@@ -1009,6 +1232,9 @@ _HTML_EXPORT_JS = r"""
         srcMsgLocalid,
         srcMsgCreateTime,
         renderType,
+        title: outTitle,
+        recordItem,
+        url: outUrl,
         content
       }
     })
@@ -1028,15 +1254,64 @@ _HTML_EXPORT_JS = r"""
     if (!modal || !titleEl || !closeBtn || !emptyEl || !listEl) return
 
     const mediaIndex = readMediaIndex()
+    let historyStack = []
+    let currentState = null
+    let backBtn = null
+
+    const updateBackVisibility = () => {
+      if (!backBtn) return
+      const show = Array.isArray(historyStack) && historyStack.length > 0
+      try { backBtn.classList.toggle('hidden', !show) } catch {}
+    }
+
+    // Add a back button next to the title (created at runtime to avoid changing the HTML template).
+    try {
+      const header = titleEl.parentElement
+      if (header) {
+        const wrap = document.createElement('div')
+        wrap.className = 'flex items-center gap-2 min-w-0'
+
+        backBtn = document.createElement('button')
+        backBtn.type = 'button'
+        backBtn.className = 'p-2 rounded hover:bg-black/5 flex-shrink-0 hidden'
+        try { backBtn.setAttribute('aria-label', '返回') } catch {}
+        try { backBtn.setAttribute('title', '返回') } catch {}
+        backBtn.innerHTML = '<svg class="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>'
+
+        header.insertBefore(wrap, titleEl)
+        wrap.appendChild(backBtn)
+        wrap.appendChild(titleEl)
+      }
+    } catch {}
 
     const close = () => {
       try { modal.classList.add('hidden') } catch {}
       try { modal.style.display = 'none' } catch {}
       try { modal.setAttribute('aria-hidden', 'true') } catch {}
       try { document.body.style.overflow = '' } catch {}
-      try { titleEl.textContent = '合并消息' } catch {}
+      try { titleEl.textContent = '聊天记录' } catch {}
       try { listEl.textContent = '' } catch {}
       try { emptyEl.style.display = '' } catch {}
+      historyStack = []
+      currentState = null
+      updateBackVisibility()
+    }
+
+    const buildChatHistoryState = (payload) => {
+      const title = String(payload?.title || '聊天记录').trim() || '聊天记录'
+      const xml = String(payload?.recordItem || '').trim()
+      const parsed = parseChatHistoryRecord(xml)
+      const info = (parsed && parsed.info) ? parsed.info : { isChatRoom: false }
+      let records = (parsed && Array.isArray(parsed.items)) ? parsed.items : []
+
+      if (!records.length) {
+        const lines = Array.isArray(payload?.fallbackLines)
+          ? payload.fallbackLines
+          : String(payload?.content || '').trim().split(/\r?\n/).map((x) => String(x || '').trim()).filter(Boolean)
+        records = lines.map((line, idx) => ({ id: String(idx), renderType: 'text', content: line, sourcename: '', sourcetime: '' }))
+      }
+
+      return { title, info, records }
     }
 
     const renderRecordRow = (rec, info) => {
@@ -1102,7 +1377,123 @@ _HTML_EXPORT_JS = r"""
       const serverId = String(rec?.fromnewmsgid || '').trim()
       const serverMd5 = resolveServerMd5(mediaIndex, serverId)
 
-      if (rt === 'video') {
+      if (rt === 'chatHistory') {
+        const card = document.createElement('div')
+        card.className = 'wechat-chat-history-card wechat-special-card msg-radius'
+
+        const chBody = document.createElement('div')
+        chBody.className = 'wechat-chat-history-body'
+
+        const chTitle = document.createElement('div')
+        chTitle.className = 'wechat-chat-history-title'
+        chTitle.textContent = String(rec?.title || '聊天记录')
+        chBody.appendChild(chTitle)
+
+        const raw = String(rec?.content || '').trim()
+        const lines = raw ? raw.split(/\r?\n/).map((x) => String(x || '').trim()).filter(Boolean).slice(0, 4) : []
+        if (lines.length) {
+          const preview = document.createElement('div')
+          preview.className = 'wechat-chat-history-preview'
+          for (const line of lines) {
+            const el = document.createElement('div')
+            el.className = 'wechat-chat-history-line'
+            el.textContent = line
+            preview.appendChild(el)
+          }
+          chBody.appendChild(preview)
+        }
+
+        card.appendChild(chBody)
+
+        const bottom = document.createElement('div')
+        bottom.className = 'wechat-chat-history-bottom'
+        const label = document.createElement('span')
+        label.textContent = '聊天记录'
+        bottom.appendChild(label)
+        card.appendChild(bottom)
+
+        const nestedXml = String(rec?.recordItem || '').trim()
+        if (nestedXml) {
+          card.classList.add('cursor-pointer')
+          card.addEventListener('click', (ev) => {
+            try { ev.preventDefault() } catch {}
+            try { ev.stopPropagation() } catch {}
+            openNestedChatHistory(rec)
+          })
+        }
+
+        body.appendChild(card)
+      } else if (rt === 'link') {
+        const href = normalizeChatHistoryUrl(rec?.url) || normalizeChatHistoryUrl(rec?.externurl)
+        const heading = String(rec?.title || '').trim() || content || href || '链接'
+        const desc = String(rec?.content || '').trim()
+
+        const thumbMd5 = pickFirstMd5(rec?.fullmd5, rec?.thumbfullmd5, rec?.md5)
+        let previewUrl = resolveMd5Any(mediaIndex, thumbMd5)
+        if (!previewUrl && serverMd5) previewUrl = resolveMd5Any(mediaIndex, serverMd5)
+        if (!previewUrl) previewUrl = resolveRemoteAny(mediaIndex, rec?.externurl, rec?.cdnurlstring, rec?.encrypturlstring)
+
+        const card = document.createElement(href ? 'a' : 'div')
+        card.className = 'wechat-link-card wechat-special-card msg-radius cursor-pointer'
+        if (href) {
+          card.href = href
+          card.target = '_blank'
+          card.rel = 'noreferrer noopener'
+        }
+        try { card.style.textDecoration = 'none' } catch {}
+        try { card.style.outline = 'none' } catch {}
+
+        const linkContent = document.createElement('div')
+        linkContent.className = 'wechat-link-content'
+
+        const linkInfo = document.createElement('div')
+        linkInfo.className = 'wechat-link-info'
+        const titleEl = document.createElement('div')
+        titleEl.className = 'wechat-link-title'
+        titleEl.textContent = heading
+        linkInfo.appendChild(titleEl)
+        if (desc) {
+          const descEl = document.createElement('div')
+          descEl.className = 'wechat-link-desc'
+          descEl.textContent = desc
+          linkInfo.appendChild(descEl)
+        }
+        linkContent.appendChild(linkInfo)
+
+        if (previewUrl) {
+          const thumb = document.createElement('div')
+          thumb.className = 'wechat-link-thumb'
+          const img = document.createElement('img')
+          img.src = previewUrl
+          img.alt = heading || '链接预览'
+          img.className = 'wechat-link-thumb-img'
+          try { img.referrerPolicy = 'no-referrer' } catch {}
+          thumb.appendChild(img)
+          linkContent.appendChild(thumb)
+        }
+
+        card.appendChild(linkContent)
+
+        const fromRow = document.createElement('div')
+        fromRow.className = 'wechat-link-from'
+        const fromText = (() => {
+          const f0 = String(rec?.from || '').trim()
+          if (f0) return f0
+          try { return href ? (new URL(href).hostname || '') : '' } catch { return '' }
+        })()
+        const fromAvatarText = fromText ? (Array.from(fromText)[0] || '') : ''
+        const fromAvatar = document.createElement('div')
+        fromAvatar.className = 'wechat-link-from-avatar'
+        fromAvatar.textContent = fromAvatarText || '\u200B'
+        const fromName = document.createElement('div')
+        fromName.className = 'wechat-link-from-name'
+        fromName.textContent = fromText || '\u200B'
+        fromRow.appendChild(fromAvatar)
+        fromRow.appendChild(fromName)
+        card.appendChild(fromRow)
+
+        body.appendChild(card)
+      } else if (rt === 'video') {
         const videoMd5 = pickFirstMd5(rec?.fullmd5, rec?.md5)
         const thumbMd5 = pickFirstMd5(rec?.thumbfullmd5) || videoMd5
         let videoUrl = resolveMd5Any(mediaIndex, videoMd5)
@@ -1202,20 +1593,11 @@ _HTML_EXPORT_JS = r"""
       return row
     }
 
-    const openFromCard = (card) => {
-      const title = String(card?.getAttribute('data-title') || '合并消息').trim() || '合并消息'
-      const b64 = String(card?.getAttribute('data-record-item-b64') || '').trim()
-      const xml = decodeBase64Utf8(b64)
-      const parsed = parseChatHistoryRecord(xml)
-      const info = (parsed && parsed.info) ? parsed.info : { isChatRoom: false }
-      let records = (parsed && Array.isArray(parsed.items)) ? parsed.items : []
-
-      if (!records.length) {
-        const lines = Array.from(card.querySelectorAll('.wechat-chat-history-line') || [])
-          .map((el) => String(el?.textContent || '').trim())
-          .filter(Boolean)
-        records = lines.map((line, idx) => ({ id: String(idx), renderType: 'text', content: line, sourcename: '', sourcetime: '' }))
-      }
+    const applyChatHistoryState = (state) => {
+      currentState = state
+      const title = String(state?.title || '聊天记录').trim() || '聊天记录'
+      const info = state?.info || { isChatRoom: false }
+      const records = Array.isArray(state?.records) ? state.records : []
 
       try { titleEl.textContent = title } catch {}
       try { listEl.textContent = '' } catch {}
@@ -1230,6 +1612,45 @@ _HTML_EXPORT_JS = r"""
           } catch {}
         }
       }
+
+      updateBackVisibility()
+    }
+
+    const openNestedChatHistory = (rec) => {
+      const xml = String(rec?.recordItem || '').trim()
+      if (!xml) return
+      if (currentState) {
+        historyStack = [...historyStack, currentState]
+      }
+      const state = buildChatHistoryState({
+        title: String(rec?.title || '聊天记录'),
+        recordItem: xml,
+        content: String(rec?.content || ''),
+      })
+      applyChatHistoryState(state)
+    }
+
+    if (backBtn) {
+      backBtn.addEventListener('click', (ev) => {
+        try { ev.preventDefault() } catch {}
+        if (!Array.isArray(historyStack) || !historyStack.length) return
+        const prev = historyStack[historyStack.length - 1]
+        historyStack = historyStack.slice(0, -1)
+        applyChatHistoryState(prev)
+      })
+    }
+
+    const openFromCard = (card) => {
+      const title = String(card?.getAttribute('data-title') || '聊天记录').trim() || '聊天记录'
+      const b64 = String(card?.getAttribute('data-record-item-b64') || '').trim()
+      const xml = decodeBase64Utf8(b64)
+      const lines = Array.from(card.querySelectorAll('.wechat-chat-history-line') || [])
+        .map((el) => String(el?.textContent || '').trim())
+        .filter(Boolean)
+
+      historyStack = []
+      const state = buildChatHistoryState({ title, recordItem: xml, fallbackLines: lines })
+      applyChatHistoryState(state)
 
       try { modal.classList.remove('hidden') } catch {}
       try { modal.style.display = 'flex' } catch {}
@@ -1269,6 +1690,7 @@ _HTML_EXPORT_JS = r"""
     initSessionSearch()
     initVoicePlayback()
     initChatHistoryModal()
+    initPagedMessageLoading()
 
     const select = document.getElementById('messageTypeFilter')
     if (select) {
@@ -1469,6 +1891,7 @@ class ChatExportManager:
         output_dir: Optional[str],
         allow_process_key_extract: bool,
         download_remote_media: bool,
+        html_page_size: int = 1000,
         privacy_mode: bool,
         file_name: Optional[str],
     ) -> ExportJob:
@@ -1493,6 +1916,7 @@ class ChatExportManager:
                 "outputDir": str(output_dir or "").strip(),
                 "allowProcessKeyExtract": bool(allow_process_key_extract),
                 "downloadRemoteMedia": bool(download_remote_media),
+                "htmlPageSize": int(html_page_size) if int(html_page_size or 0) > 0 else int(html_page_size or 0),
                 "privacyMode": bool(privacy_mode),
                 "fileName": str(file_name or "").strip(),
             },
@@ -1544,6 +1968,12 @@ class ChatExportManager:
         allow_process_key_extract = bool(opts.get("allowProcessKeyExtract"))
         download_remote_media = bool(opts.get("downloadRemoteMedia"))
         privacy_mode = bool(opts.get("privacyMode"))
+        try:
+            html_page_size = int(opts.get("htmlPageSize") or 1000)
+        except Exception:
+            html_page_size = 1000
+        if html_page_size < 0:
+            html_page_size = 0
 
         media_kinds_raw = opts.get("mediaKinds") or []
         media_kinds: list[MediaKind] = []
@@ -1898,6 +2328,7 @@ class ChatExportManager:
                             session_items=session_items,
                             download_remote_media=remote_download_enabled,
                             remote_written=remote_written,
+                            html_page_size=html_page_size,
                             start_time=st,
                             end_time=et,
                             want_types=want_types,
@@ -2045,6 +2476,7 @@ class ChatExportManager:
                         "mediaKinds": media_kinds,
                         "allowProcessKeyExtract": allow_process_key_extract,
                         "downloadRemoteMedia": bool(download_remote_media),
+                        "htmlPageSize": int(html_page_size) if export_format == "html" else None,
                         "privacyMode": privacy_mode,
                     },
                     "stats": {
@@ -3110,6 +3542,7 @@ def _write_conversation_html(
     session_items: list[dict[str, Any]],
     download_remote_media: bool,
     remote_written: dict[str, str],
+    html_page_size: int = 1000,
     start_time: Optional[int],
     end_time: Optional[int],
     want_types: Optional[set[str]],
@@ -3499,7 +3932,7 @@ def _write_conversation_html(
         ("emoji", "表情"),
         ("video", "视频"),
         ("voice", "语音"),
-        ("chatHistory", "合并消息"),
+        ("chatHistory", "聊天记录"),
         ("transfer", "转账"),
         ("redPacket", "红包"),
         ("file", "文件"),
@@ -3509,10 +3942,46 @@ def _write_conversation_html(
         ("voip", "通话"),
     ]
 
+    page_size = 0
+    try:
+        page_size = int(html_page_size or 0)
+    except Exception:
+        page_size = 0
+    if page_size < 0:
+        page_size = 0
+
     # NOTE: write to a temp file first to avoid zip interleaving writes.
     with tempfile.TemporaryDirectory(prefix="wechat_chat_export_") as tmp_dir:
         tmp_path = Path(tmp_dir) / "messages.html"
-        with open(tmp_path, "w", encoding="utf-8", newline="\n") as tw:
+        pages_frag_dir = Path(tmp_dir) / "pages_fragments"
+        page_frag_paths: list[Path] = []
+        paged_old_page_paths: list[Path] = []
+        paged_total_pages = 1
+        paged_pad_width = 4
+        with open(tmp_path, "w", encoding="utf-8", newline="\n") as hw:
+            class _WriteProxy:
+                def __init__(self, default_target):
+                    self._default = default_target
+                    self._target = default_target
+
+                def set_target(self, target) -> None:
+                    self._target = target or self._default
+
+                def write(self, s: str) -> Any:
+                    return self._target.write(s)
+
+                def flush(self) -> None:
+                    try:
+                        if self._target is not self._default:
+                            self._target.flush()
+                    except Exception:
+                        pass
+                    try:
+                        self._default.flush()
+                    except Exception:
+                        pass
+
+            tw = _WriteProxy(hw)
             tw.write("<!doctype html>\n")
             tw.write('<html lang="zh-CN">\n')
             tw.write("<head>\n")
@@ -3688,6 +4157,55 @@ def _write_conversation_html(
             tw.write("        </div>\n")
 
             tw.write('        <div id="messageContainer" class="wce-message-container flex-1 overflow-y-auto p-4 min-h-0">\n')
+            tw.write('          <div id="wcePager" class="wce-pager" style="display:none">\n')
+            tw.write('            <button id="wceLoadPrevBtn" type="button" class="wce-pager-btn">加载更早消息</button>\n')
+            tw.write('            <span id="wceLoadPrevStatus" class="wce-pager-status"></span>\n')
+            tw.write("          </div>\n")
+            tw.write('          <div id="wceMessageList">\n')
+
+            page_fp = None
+            page_fp_path: Optional[Path] = None
+            page_no = 1
+            page_msg_count = 0
+
+            def _open_page_fp() -> Any:
+                nonlocal page_fp, page_fp_path
+                pages_frag_dir.mkdir(parents=True, exist_ok=True)
+                page_fp_path = pages_frag_dir / f"page_{page_no}.htmlfrag"
+                page_fp = open(page_fp_path, "w", encoding="utf-8", newline="\n")
+                return page_fp
+
+            def _close_page_fp() -> None:
+                nonlocal page_fp, page_fp_path
+                if page_fp is None:
+                    page_fp_path = None
+                    return
+                try:
+                    page_fp.flush()
+                except Exception:
+                    pass
+                try:
+                    page_fp.close()
+                except Exception:
+                    pass
+                if page_fp_path is not None:
+                    page_frag_paths.append(page_fp_path)
+                page_fp = None
+                page_fp_path = None
+                tw.set_target(hw)
+
+            def _mark_exported() -> None:
+                nonlocal exported, page_no, page_msg_count
+                exported += 1
+                with lock:
+                    job.progress.messages_exported += 1
+                    job.progress.current_conversation_messages_exported = exported
+                if page_size > 0:
+                    page_msg_count += 1
+                    if page_msg_count >= page_size:
+                        _close_page_fp()
+                        page_no += 1
+                        page_msg_count = 0
 
             sender_alias_map: dict[str, int] = {}
             prev_ts = 0
@@ -3755,6 +4273,11 @@ def _write_conversation_html(
                 if ts and ((prev_ts == 0) or (abs(ts - prev_ts) >= 300)):
                     show_divider = True
 
+                if page_size > 0:
+                    if page_fp is None:
+                        _open_page_fp()
+                    tw.set_target(page_fp)
+
                 if show_divider:
                     divider_text = _format_session_time(ts)
                     if divider_text:
@@ -3770,10 +4293,7 @@ def _write_conversation_html(
                     tw.write(f'              <div class="px-3 py-1 text-xs text-[#9e9e9e]">{esc_text(msg.get("content") or "")}</div>\n')
                     tw.write("            </div>\n")
                     tw.write("          </div>\n")
-                    exported += 1
-                    with lock:
-                        job.progress.messages_exported += 1
-                        job.progress.current_conversation_messages_exported = exported
+                    _mark_exported()
                     if ts:
                         prev_ts = ts
                     continue
@@ -4186,7 +4706,7 @@ def _write_conversation_html(
 
                         tw.write("                  </div>\n")
                 elif rt == "chatHistory":
-                    title = str(msg.get("title") or "").strip() or "合并消息"
+                    title = str(msg.get("title") or "").strip() or "聊天记录"
                     record_item = str(msg.get("recordItem") or "").strip()
                     record_item_b64 = ""
                     if record_item:
@@ -4260,7 +4780,7 @@ def _write_conversation_html(
                             tw.write(f'                        <div class="wechat-chat-history-line">{esc_text(line)}</div>\n')
                         tw.write("                      </div>\n")
                     tw.write("                    </div>\n")
-                    tw.write('                    <div class="wechat-chat-history-bottom"><span>合并消息</span></div>\n')
+                    tw.write('                    <div class="wechat-chat-history-bottom"><span>聊天记录</span></div>\n')
                     tw.write("                  </div>\n")
                 elif rt == "transfer":
                     received = is_transfer_received(msg)
@@ -4328,17 +4848,55 @@ def _write_conversation_html(
                 tw.write("            </div>\n")
                 tw.write("          </div>\n")
 
-                exported += 1
-                with lock:
-                    job.progress.messages_exported += 1
-                    job.progress.current_conversation_messages_exported = exported
+                _mark_exported()
                 if ts:
                     prev_ts = ts
 
                 if scanned % 500 == 0 and job.cancel_requested:
                     raise _JobCancelled()
 
+            if page_size > 0:
+                _close_page_fp()
+                paged_total_pages = max(1, len(page_frag_paths))
+                paged_pad_width = max(4, len(str(paged_total_pages)))
+                if page_frag_paths:
+                    paged_old_page_paths = list(page_frag_paths[:-1])
+                    tw.set_target(hw)
+                    try:
+                        tw.write(page_frag_paths[-1].read_text(encoding="utf-8"))
+                    except Exception:
+                        try:
+                            tw.write(page_frag_paths[-1].read_text(encoding="utf-8", errors="ignore"))
+                        except Exception:
+                            pass
+                else:
+                    paged_old_page_paths = []
+                    tw.set_target(hw)
+
+            # Close message list + container
+            tw.set_target(hw)
+            tw.write("          </div>\n")
             tw.write("        </div>\n")
+
+            if page_size > 0 and paged_total_pages > 1:
+                page_meta = {
+                    "schemaVersion": 1,
+                    "pageSize": int(page_size),
+                    "totalPages": int(paged_total_pages),
+                    "initialPage": int(paged_total_pages),
+                    "totalMessages": int(exported),
+                    "padWidth": int(paged_pad_width),
+                    "pageFilePrefix": "pages/page-",
+                    "pageFileSuffix": ".js",
+                    "inlinedPages": [int(paged_total_pages)],
+                }
+                try:
+                    page_meta_payload = json.dumps(page_meta, ensure_ascii=False)
+                except Exception:
+                    page_meta_payload = "{}"
+                page_meta_payload = page_meta_payload.replace("</", "<\\/")
+                tw.write(f'<script type="application/json" id="wcePageMeta">{page_meta_payload}</script>\n')
+
             tw.write("      </div>\n")
             tw.write("    </div>\n")
             tw.write("  </div>\n")
@@ -4357,7 +4915,7 @@ def _write_conversation_html(
             )
             tw.write('  <div class="w-[92vw] max-w-[560px] max-h-[80vh] bg-white rounded-xl shadow-xl overflow-hidden flex flex-col" role="dialog" aria-modal="true">\n')
             tw.write('    <div class="px-4 py-3 bg-neutral-100 border-b border-gray-200 flex items-center justify-between">\n')
-            tw.write('      <div id="chatHistoryModalTitle" class="text-sm text-[#161616] truncate">合并消息</div>\n')
+            tw.write('      <div id="chatHistoryModalTitle" class="text-sm text-[#161616] truncate">聊天记录</div>\n')
             tw.write('      <button type="button" id="chatHistoryModalClose" class="p-2 rounded hover:bg-black/5" aria-label="关闭" title="关闭">\n')
             tw.write('        <svg class="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">\n')
             tw.write('          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>\n')
@@ -4365,7 +4923,7 @@ def _write_conversation_html(
             tw.write("      </button>\n")
             tw.write("    </div>\n")
             tw.write('    <div class="flex-1 overflow-auto bg-white">\n')
-            tw.write('      <div id="chatHistoryModalEmpty" class="text-sm text-gray-500 text-center py-10">没有可显示的合并消息</div>\n')
+            tw.write('      <div id="chatHistoryModalEmpty" class="text-sm text-gray-500 text-center py-10">没有可显示的聊天记录</div>\n')
             tw.write('      <div id="chatHistoryModalList"></div>\n')
             tw.write("    </div>\n")
             tw.write("  </div>\n")
@@ -4376,6 +4934,39 @@ def _write_conversation_html(
             tw.flush()
 
         zf.write(str(tmp_path), arcname)
+
+        if page_size > 0 and paged_old_page_paths:
+            for page_no, frag_path in enumerate(paged_old_page_paths, start=1):
+                try:
+                    frag_text = frag_path.read_text(encoding="utf-8")
+                except Exception:
+                    try:
+                        frag_text = frag_path.read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        frag_text = ""
+
+                try:
+                    frag_json = json.dumps(frag_text, ensure_ascii=False)
+                except Exception:
+                    frag_json = json.dumps("", ensure_ascii=False)
+
+                num = str(page_no).zfill(int(paged_pad_width or 4))
+                arc_js = f"{conv_dir}/pages/page-{num}.js"
+                js_payload = (
+                    "(() => {\n"
+                    f"  const pageNo = {int(page_no)};\n"
+                    f"  const html = {frag_json};\n"
+                    "  try {\n"
+                    "    const fn = window.__WCE_PAGE_LOADED__;\n"
+                    "    if (typeof fn === 'function') fn(pageNo, html);\n"
+                    "    else {\n"
+                    "      const q = (window.__WCE_PAGE_QUEUE__ = window.__WCE_PAGE_QUEUE__ || []);\n"
+                    "      q.push([pageNo, html]);\n"
+                    "    }\n"
+                    "  } catch {}\n"
+                    "})();\n"
+                )
+                zf.writestr(arc_js, js_payload)
 
     return exported
 
