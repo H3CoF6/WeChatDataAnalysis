@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Derive version from tag
         shell: pwsh
@@ -25,6 +27,67 @@ jobs:
           }
           "TAG_NAME=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Generate release notes from commits
+        shell: pwsh
+        run: |
+          git fetch --force --tags
+
+          $tag = $env:TAG_NAME
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            throw "TAG_NAME is empty"
+          }
+
+          $repo = "${{ github.repository }}"
+
+          $prev = ""
+          try {
+            $commit = (git rev-list -n 1 $tag).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($commit)) {
+              $prev = (git describe --tags --abbrev=0 "$commit^" 2>$null).Trim()
+            }
+          } catch {}
+
+          if ([string]::IsNullOrWhiteSpace($prev)) {
+            # Fallback: best-effort previous version tag by semver-ish sorting.
+            $prev = (git tag --list "v*" --sort=-v:refname | Where-Object { $_ -ne $tag } | Select-Object -First 1)
+          }
+
+          $range = ""
+          if (-not [string]::IsNullOrWhiteSpace($prev)) {
+            $range = "$prev..$tag"
+          }
+
+          $lines = @()
+          if (-not [string]::IsNullOrWhiteSpace($range)) {
+            $lines = @(git log --no-merges --pretty=format:"- %s (%h)" --reverse $range)
+          } else {
+            # First release tag / missing history: include a small recent window.
+            $lines = @(git log --no-merges --pretty=format:"- %s (%h)" --reverse -n 50)
+          }
+
+          if (-not $lines -or $lines.Count -eq 0) {
+            $lines = @("- 修复了一些已知问题，提升了稳定性。")
+          }
+
+          $max = 60
+          if ($lines.Count -gt $max) {
+            $total = $lines.Count
+            $lines = @($lines | Select-Object -First $max)
+            $lines += "- ...（共 $total 条提交，更多请查看完整变更链接）"
+          }
+
+          $body = @()
+          $body += "## 更新内容 ($tag)"
+          $body += ""
+          $body += $lines
+
+          if (-not [string]::IsNullOrWhiteSpace($prev)) {
+            $body += ""
+            $body += "完整变更: https://github.com/$repo/compare/$prev...$tag"
+          }
+
+          ($body -join "`n") | Out-File -FilePath release-notes.md -Encoding utf8
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -71,7 +134,7 @@ jobs:
         with:
           tag_name: ${{ env.TAG_NAME }}
           name: ${{ env.TAG_NAME }}
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             desktop/dist/*Setup*.exe
             desktop/dist/*Setup*.exe.blockmap
