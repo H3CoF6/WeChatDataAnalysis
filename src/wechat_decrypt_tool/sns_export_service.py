@@ -1077,6 +1077,21 @@ class SnsExportManager:
                     ff = p.get("finderFeed") if isinstance(p.get("finderFeed"), dict) else {}
                     name = str(ff.get("nickname") or "").strip() if isinstance(ff, dict) else ""
                     return f"视频号·{name}" if name else "视频号"
+                if t in (5, 42):
+                    name0 = str(p.get("sourceName") or "").strip()
+                    if name0:
+                        return name0
+                    url0 = str(p.get("contentUrl") or "").strip()
+                    if not url0:
+                        ml0 = p.get("media") if isinstance(p.get("media"), list) else []
+                        m0 = ml0[0] if (ml0 and isinstance(ml0[0], dict)) else {}
+                        url0 = str(m0.get("url") or "").strip()
+                    if url0:
+                        # host+path (no query) as a readable fallback label.
+                        s = re.sub(r"^https?://", "", url0.strip(), flags=re.I)
+                        s = s.split("#", 1)[0].split("?", 1)[0].rstrip("/")
+                        return s or ("音乐" if t == 42 else "外部分享")
+                    return "音乐" if t == 42 else "外部分享"
                 return ""
 
             def format_finder_feed_card_text(p: dict[str, Any]) -> str:
@@ -1194,6 +1209,45 @@ class SnsExportManager:
                 else:
                     out.append(
                         '<div class="w-12 h-12 flex items-center justify-center bg-gray-200 text-gray-400 flex-shrink-0 text-xs">文章</div>'
+                    )
+                out.append('<div class="flex-1 min-w-0 flex items-center overflow-hidden h-12">')
+                out.append(f'<div class="text-[13px] text-gray-900 leading-tight line-clamp-2">{_esc_text(title0)}</div>')
+                out.append("</div></div>")
+                out.append("</a>" if content_url else "</div>")
+                out.append("</div>")
+            elif post_type in (5, 42):
+                # External share card (WeChat-like, clickable).
+                content_url = str(post.get("contentUrl") or "").strip()
+                title0 = str(post.get("title") or "").strip()
+                media_list = post.get("media") if isinstance(post.get("media"), list) else []
+                m0 = media_list[0] if (media_list and isinstance(media_list[0], dict)) else {}
+                if not content_url and m0:
+                    content_url = str(m0.get("url") or "").strip()
+
+                if not title0:
+                    title0 = content_url or ("音乐分享" if post_type == 42 else "外部分享")
+
+                thumb_arc = export_image_to_zip(zf=zf, post=post, media=m0, idx=0, prefer_thumb=True) if m0 else ""
+
+                placeholder = "音乐" if post_type == 42 else "链接"
+                out.append('<div class="mt-2 w-full">')
+                if content_url:
+                    out.append(
+                        f'<a href="{_esc_attr(content_url)}" target="_blank" rel="noopener noreferrer" '
+                        'class="block w-full bg-[#F7F7F7] p-2 rounded-sm no-underline hover:bg-[#EFEFEF] transition-colors">'
+                    )
+                else:
+                    out.append('<div class="block w-full bg-[#F7F7F7] p-2 rounded-sm">')
+
+                out.append('<div class="flex items-center gap-3">')
+                if thumb_arc:
+                    out.append(
+                        f'<img src="{_esc_attr(thumb_arc)}" class="w-12 h-12 object-cover flex-shrink-0 bg-white" '
+                        'alt="" loading="lazy" referrerpolicy="no-referrer" />'
+                    )
+                else:
+                    out.append(
+                        f'<div class="w-12 h-12 flex items-center justify-center bg-gray-200 text-gray-400 flex-shrink-0 text-xs">{_esc_text(placeholder)}</div>'
                     )
                 out.append('<div class="flex-1 min-w-0 flex items-center overflow-hidden h-12">')
                 out.append(f'<div class="text-[13px] text-gray-900 leading-tight line-clamp-2">{_esc_text(title0)}</div>')
