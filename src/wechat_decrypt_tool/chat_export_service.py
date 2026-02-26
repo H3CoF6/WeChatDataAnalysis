@@ -167,8 +167,8 @@ _VUE_SCOPED_ATTR_RE = re.compile(r"\[data-v-[0-9a-f]{8}\]", flags=re.IGNORECASE)
 _CHAT_HISTORY_MD5_TAG_RE = re.compile(
     r"(?i)<(?:fullmd5|thumbfullmd5|md5|emoticonmd5|emojimd5|cdnthumbmd5)>([0-9a-f]{32})<"
 )
-_CHAT_HISTORY_URL_TAG_RE = re.compile(r"(?i)<(?:sourceheadurl|cdnurlstring|encrypturlstring|externurl)>(https?://[^<\\s]+)<")
-_CHAT_HISTORY_SERVER_ID_TAG_RE = re.compile(r"(?i)<fromnewmsgid>\\s*(\\d+)\\s*<")
+_CHAT_HISTORY_URL_TAG_RE = re.compile(r"(?i)<(?:sourceheadurl|cdnurlstring|encrypturlstring|externurl)>(https?://[^<\s]+)<")
+_CHAT_HISTORY_SERVER_ID_TAG_RE = re.compile(r"(?i)<fromnewmsgid>\s*(\d+)\s*<")
 
 
 def _strip_vue_scoped_attrs(css: str) -> str:
@@ -187,10 +187,13 @@ def _load_ui_css_bundle(*, ui_public_dir: Optional[Path], report: dict[str, Any]
 
     Includes:
       - `_nuxt/entry.*.css` (base + tailwind utilities)
-      - All `_nuxt/*.css` chunks (scoped selectors stripped; chat chunk appended last)
+      - Chat page chunks `_nuxt/*_username_*.css` (scoped selectors stripped)
       - `_HTML_EXPORT_CSS_PATCH` appended last
 
     Falls back to `_HTML_EXPORT_CSS_FALLBACK` when entry css is missing.
+
+    Note: We only bundle chat-related chunks because stripping Vue SFC scoped selectors (`[data-v-...]`) can
+    otherwise leak scoped utility overrides (e.g. `.text-sm[data-v-...]`) into global rules in the export.
     """
 
     if ui_public_dir is None:
@@ -211,15 +214,12 @@ def _load_ui_css_bundle(*, ui_public_dir: Optional[Path], report: dict[str, Any]
     entry_css = _strip_vue_scoped_attrs(entry_css)
 
     nuxt_dir = Path(ui_public_dir) / "_nuxt"
-    extra_css_paths: list[Path] = []
+    chat_css_paths: list[Path] = []
     try:
-        extra_css_paths = [p for p in nuxt_dir.glob("*.css") if (p.is_file() and (not p.name.startswith("entry.")))]
+        chat_css_paths = [p for p in nuxt_dir.glob("*_username_*.css") if p.is_file()]
     except Exception:
-        extra_css_paths = []
+        chat_css_paths = []
 
-    chat_css_paths = [p for p in extra_css_paths if "_username_" in p.name]
-    other_css_paths = [p for p in extra_css_paths if p not in chat_css_paths]
-    other_css_paths.sort(key=lambda p: p.name)
     chat_css_paths.sort(key=lambda p: p.name)
 
     if not chat_css_paths:
@@ -231,7 +231,7 @@ def _load_ui_css_bundle(*, ui_public_dir: Optional[Path], report: dict[str, Any]
             pass
 
     extra_chunks: list[str] = []
-    for p in [*other_css_paths, *chat_css_paths]:
+    for p in chat_css_paths:
         try:
             extra_chunks.append(_strip_vue_scoped_attrs(p.read_text(encoding="utf-8")))
         except Exception:
@@ -520,9 +520,9 @@ a { color: inherit; }
 _HTML_EXPORT_CSS_PATCH = """
 /* Offline HTML viewer patch */
 :root {
+  /* Keep aligned with frontend defaults (see `frontend/app.vue`). */
   --dpr: 1;
   --message-radius: 4px;
-  /* Keep consistent with `frontend/app.vue`. */
   --sidebar-rail-step: 48px;
   --sidebar-rail-btn: 32px;
   --sidebar-rail-icon: 24px;
@@ -537,23 +537,23 @@ body { background: #EDEDED; }
 .wce-chat-area { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #EDEDED; }
 .wce-chat-main { flex: 1; display: flex; min-height: 0; }
 .wce-chat-col { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
-.wce-chat-header { height: 56px; padding: 0 20px; display: flex; align-items: center; border-bottom: 1px solid #e5e7eb; background: #EDEDED; }
-.wce-chat-title { font-size: 16px; font-weight: 500; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wce-filter-select { font-size: 12px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: #374151; }
+.wce-chat-header { height: calc(56px / var(--dpr)); padding: 0 calc(20px / var(--dpr)); display: flex; align-items: center; border-bottom: 1px solid #e5e7eb; background: #EDEDED; }
+.wce-chat-title { font-size: 1rem; font-weight: 500; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wce-filter-select { font-size: 0.75rem; padding: calc(6px / var(--dpr)) calc(8px / var(--dpr)); border: 0; border-radius: calc(8px / var(--dpr)); background: transparent; color: #374151; }
 .wce-message-container { flex: 1; overflow: auto; padding: 16px; min-height: 0; }
-.wce-pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 0 12px; }
-.wce-pager-btn { font-size: 12px; padding: 6px 10px; border-radius: 8px; border: 1px solid #e5e7eb; background: #fff; color: #374151; cursor: pointer; }
+.wce-pager { display: flex; align-items: center; justify-content: center; gap: calc(12px / var(--dpr)); padding: calc(6px / var(--dpr)) 0 calc(12px / var(--dpr)); }
+.wce-pager-btn { font-size: 0.75rem; padding: calc(6px / var(--dpr)) calc(10px / var(--dpr)); border-radius: calc(8px / var(--dpr)); border: 1px solid #e5e7eb; background: #fff; color: #374151; cursor: pointer; }
 .wce-pager-btn:hover { background: #f9fafb; }
 .wce-pager-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.wce-pager-status { font-size: 12px; color: #6b7280; }
+.wce-pager-status { font-size: 0.75rem; color: #6b7280; }
 
 /* Single session item (middle column). */
 .wce-session-item { display: flex; align-items: center; gap: 12px; padding: 0 12px; height: 80px; border-bottom: 1px solid #f3f4f6; background: #DEDEDE; text-decoration: none; color: inherit; }
 .wce-session-avatar { width: 45px; height: 45px; border-radius: 6px; overflow: hidden; background: #d1d5db; flex-shrink: 0; }
 .wce-session-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .wce-session-meta { min-width: 0; flex: 1; }
-.wce-session-name { font-size: 14px; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wce-session-sub { font-size: 12px; color: #6b7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.wce-session-name { font-size: 0.875rem; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wce-session-sub { font-size: 0.75rem; color: #6b7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: calc(2px / var(--dpr)); }
 
 /* Message rows (right column). */
 .wce-msg-row { display: flex; align-items: flex-start; margin-bottom: 24px; }
@@ -565,10 +565,10 @@ body { background: #EDEDED; }
 .wce-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .wce-avatar-sent { margin-left: 12px; }
 .wce-avatar-received { margin-right: 12px; }
-.wce-sender-name { font-size: 11px; color: #6b7280; margin-bottom: 4px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wce-sender-name { font-size: 0.75rem; color: #6b7280; margin-bottom: calc(4px / var(--dpr)); max-width: calc(320px / var(--dpr)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Bubble basics (tailwind classes may override when Nuxt CSS is present). */
-.wce-bubble { padding: 8px 12px; border-radius: var(--message-radius); font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-width: 320px; position: relative; }
+.wce-bubble { padding: calc(8px / var(--dpr)) calc(12px / var(--dpr)); border-radius: var(--message-radius); font-size: 0.875rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-width: calc(320px / var(--dpr)); position: relative; }
 .wce-bubble-sent { background: #95EC69; color: #000; }
 .wce-bubble-received { background: #fff; color: #1f2937; }
 
@@ -599,7 +599,7 @@ body { background: #EDEDED; }
 
 /* System messages. */
 .wce-system { display: flex; justify-content: center; margin: 16px 0; }
-.wce-system > div { font-size: 12px; color: #9e9e9e; padding: 4px 0; }
+.wce-system > div { font-size: 0.75rem; color: #9e9e9e; padding: calc(4px / var(--dpr)) 0; }
 
 /* Media blocks. */
 .wce-media-img { max-width: 240px; max-height: 240px; border-radius: var(--message-radius); display: block; object-fit: cover; }
@@ -610,15 +610,15 @@ body { background: #EDEDED; }
 .wce-video-play > div { width: 48px; height: 48px; border-radius: 9999px; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; }
 
 .wce-file { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 12px; background: #fff; max-width: 320px; }
-.wce-file-name { font-size: 13px; color: #111827; word-break: break-all; }
-.wce-file-meta { font-size: 12px; color: #6b7280; margin-top: 4px; }
+.wce-file-name { font-size: 0.8125rem; color: #111827; word-break: break-all; }
+.wce-file-meta { font-size: 0.75rem; color: #6b7280; margin-top: calc(4px / var(--dpr)); }
 .wce-file-actions { margin-top: 8px; }
-.wce-file-actions a { font-size: 12px; color: #07c160; text-decoration: none; }
+.wce-file-actions a { font-size: 0.75rem; color: #07c160; text-decoration: none; }
 .wce-file-actions a:hover { text-decoration: underline; }
 
 .wce-audio { width: 260px; max-width: 92vw; }
 .wce-audio-actions { margin-top: 6px; }
-.wce-audio-actions a { font-size: 12px; color: #07c160; text-decoration: none; }
+.wce-audio-actions a { font-size: 0.75rem; color: #07c160; text-decoration: none; }
 .wce-audio-actions a:hover { text-decoration: underline; }
 
 /* Index page helpers. */
@@ -628,8 +628,8 @@ body { background: #EDEDED; }
 .wce-index-item { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid #f3f4f6; text-decoration: none; color: inherit; }
 .wce-index-item:last-child { border-bottom: 0; }
 .wce-index-item:hover { background: #f9fafb; }
-.wce-index-title { font-size: 18px; font-weight: 700; color: #111827; margin: 0 0 6px 0; }
-.wce-index-sub { font-size: 12px; color: #6b7280; margin: 0 0 16px 0; }
+.wce-index-title { font-size: 1.125rem; font-weight: 700; color: #111827; margin: 0 0 calc(6px / var(--dpr)) 0; }
+.wce-index-sub { font-size: 0.75rem; color: #6b7280; margin: 0 0 calc(16px / var(--dpr)) 0; }
 """
 
 
@@ -637,8 +637,14 @@ _HTML_EXPORT_JS = r"""
 (() => {
   const updateDprVar = () => {
     try {
-      const dpr = window.devicePixelRatio || 1
-      document.documentElement.style.setProperty('--dpr', String(dpr))
+      document.documentElement.style.setProperty('--dpr', '1')
+    } catch {}
+  }
+
+  const hideJsMissingBanner = () => {
+    try {
+      const el = document.getElementById('wceJsMissing')
+      if (el) el.style.display = 'none'
     } catch {}
   }
 
@@ -1039,7 +1045,8 @@ _HTML_EXPORT_JS = r"""
         const local = index && index.remote && index.remote[u]
         if (local) return String(local || '')
       } catch {}
-      if (/^https?:\\/\\//i.test(u)) return u
+      const ul = String(u || '').trim().toLowerCase()
+      if (ul.startsWith('http://') || ul.startsWith('https://')) return u
     }
     return ''
   }
@@ -1154,7 +1161,8 @@ _HTML_EXPORT_JS = r"""
 
       const fullmd5 = getText(node, 'fullmd5')
       const thumbfullmd5 = getText(node, 'thumbfullmd5')
-      const md5 = getText(node, 'md5') || getText(node, 'emoticonmd5') || getText(node, 'emojiMd5')
+      const md5 = getText(node, 'md5') || getText(node, 'emoticonmd5') || getText(node, 'emojimd5') || getText(node, 'emojiMd5')
+      const cdnthumbmd5 = getText(node, 'cdnthumbmd5')
       const cdnurlstring = normalizeChatHistoryUrl(getText(node, 'cdnurlstring'))
       const encrypturlstring = normalizeChatHistoryUrl(getText(node, 'encrypturlstring'))
       const externurl = normalizeChatHistoryUrl(getText(node, 'externurl'))
@@ -1162,7 +1170,14 @@ _HTML_EXPORT_JS = r"""
       const fromnewmsgid = getText(node, 'fromnewmsgid')
       const srcMsgLocalid = getText(node, 'srcMsgLocalid')
       const srcMsgCreateTime = getText(node, 'srcMsgCreateTime')
-      const nestedRecordItem = getAnyXml(node, 'recorditem') || getDirectChildXml(node, 'recorditem') || getText(node, 'recorditem')
+      const nestedRecordItem = (
+        getAnyXml(node, 'recorditem')
+        || getDirectChildXml(node, 'recorditem')
+        || getText(node, 'recorditem')
+        || getAnyXml(node, 'recordxml')
+        || getDirectChildXml(node, 'recordxml')
+        || getText(node, 'recordxml')
+      )
 
       let content = datatitle || datadesc
       if (!content) {
@@ -1224,6 +1239,7 @@ _HTML_EXPORT_JS = r"""
         fullmd5,
         thumbfullmd5,
         md5,
+        cdnthumbmd5,
         cdnurlstring,
         encrypturlstring,
         externurl,
@@ -1323,7 +1339,8 @@ _HTML_EXPORT_JS = r"""
       const name0 = String(rec?.sourcename || '').trim() || '?'
       const avatarUrlRaw = normalizeChatHistoryUrl(rec?.sourceheadurl)
       const avatarLocal = (mediaIndex && mediaIndex.remote && mediaIndex.remote[avatarUrlRaw]) ? String(mediaIndex.remote[avatarUrlRaw] || '') : ''
-      const avatarUrl = avatarLocal || ((avatarUrlRaw && /^https?:\\/\\//i.test(avatarUrlRaw)) ? avatarUrlRaw : '')
+      const avatarUrlLower = String(avatarUrlRaw || '').trim().toLowerCase()
+      const avatarUrl = avatarLocal || ((avatarUrlLower.startsWith('http://') || avatarUrlLower.startsWith('https://')) ? avatarUrlRaw : '')
       if (avatarUrl) {
         const img = document.createElement('img')
         img.src = avatarUrl
@@ -1428,7 +1445,7 @@ _HTML_EXPORT_JS = r"""
         const heading = String(rec?.title || '').trim() || content || href || '链接'
         const desc = String(rec?.content || '').trim()
 
-        const thumbMd5 = pickFirstMd5(rec?.fullmd5, rec?.thumbfullmd5, rec?.md5)
+        const thumbMd5 = pickFirstMd5(rec?.fullmd5, rec?.thumbfullmd5, rec?.cdnthumbmd5, rec?.md5, rec?.id)
         let previewUrl = resolveMd5Any(mediaIndex, thumbMd5)
         if (!previewUrl && serverMd5) previewUrl = resolveMd5Any(mediaIndex, serverMd5)
         if (!previewUrl) previewUrl = resolveRemoteAny(mediaIndex, rec?.externurl, rec?.cdnurlstring, rec?.encrypturlstring)
@@ -1494,8 +1511,8 @@ _HTML_EXPORT_JS = r"""
 
         body.appendChild(card)
       } else if (rt === 'video') {
-        const videoMd5 = pickFirstMd5(rec?.fullmd5, rec?.md5)
-        const thumbMd5 = pickFirstMd5(rec?.thumbfullmd5) || videoMd5
+        const videoMd5 = pickFirstMd5(rec?.fullmd5, rec?.md5, rec?.id)
+        const thumbMd5 = pickFirstMd5(rec?.thumbfullmd5, rec?.cdnthumbmd5) || videoMd5
         let videoUrl = resolveMd5Any(mediaIndex, videoMd5)
         if (!videoUrl && serverMd5) videoUrl = resolveMd5Any(mediaIndex, serverMd5)
         if (!videoUrl) videoUrl = resolveRemoteAny(mediaIndex, rec?.externurl, rec?.cdnurlstring, rec?.encrypturlstring)
@@ -1537,7 +1554,7 @@ _HTML_EXPORT_JS = r"""
 
         body.appendChild(wrap)
       } else if (rt === 'image') {
-        const imageMd5 = pickFirstMd5(rec?.fullmd5, rec?.thumbfullmd5, rec?.md5)
+        const imageMd5 = pickFirstMd5(rec?.fullmd5, rec?.thumbfullmd5, rec?.cdnthumbmd5, rec?.md5, rec?.id)
         let imgUrl = resolveMd5Any(mediaIndex, imageMd5)
         if (!imgUrl && serverMd5) imgUrl = resolveMd5Any(mediaIndex, serverMd5)
         if (!imgUrl) imgUrl = resolveRemoteAny(mediaIndex, rec?.externurl, rec?.cdnurlstring, rec?.encrypturlstring)
@@ -1562,7 +1579,7 @@ _HTML_EXPORT_JS = r"""
           body.appendChild(t)
         }
       } else if (rt === 'emoji') {
-        const emojiMd5 = pickFirstMd5(rec?.md5, rec?.fullmd5, rec?.thumbfullmd5)
+        const emojiMd5 = pickFirstMd5(rec?.md5, rec?.fullmd5, rec?.thumbfullmd5, rec?.cdnthumbmd5, rec?.id)
         let emojiUrl = resolveMd5Any(mediaIndex, emojiMd5)
         if (!emojiUrl && serverMd5) emojiUrl = resolveMd5Any(mediaIndex, serverMd5)
         if (!emojiUrl) emojiUrl = resolveRemoteAny(mediaIndex, rec?.externurl, rec?.cdnurlstring, rec?.encrypturlstring)
@@ -1670,7 +1687,15 @@ _HTML_EXPORT_JS = r"""
     document.addEventListener('keydown', (ev) => {
       const key = String(ev?.key || '')
       if (key === 'Escape' && !modal.classList.contains('hidden')) close()
-    })
+
+      if ((key === 'Enter' || key === ' ') && modal.classList.contains('hidden')) {
+        const target = ev && ev.target
+        const card = target && target.closest ? target.closest('[data-wce-chat-history=\"1\"]') : null
+        if (!card) return
+        try { ev.preventDefault() } catch {}
+        openFromCard(card)
+      }
+    }, true)
 
     document.addEventListener('click', (ev) => {
       const target = ev && ev.target
@@ -1678,10 +1703,527 @@ _HTML_EXPORT_JS = r"""
       if (!card) return
       try { ev.preventDefault() } catch {}
       openFromCard(card)
-    })
+    }, true)
+  }
+
+  const initChatHistoryFloatingWindows = () => {
+    const mediaIndex = readMediaIndex()
+    let zIndex = 1000
+    let cascade = 0
+    let idSeed = 0
+
+    const clampNumber = (value, min, max) => {
+      const n = Number(value)
+      if (!Number.isFinite(n)) return min
+      return Math.min(max, Math.max(min, n))
+    }
+
+    const getViewport = () => {
+      const w = Math.max(320, window.innerWidth || 0)
+      const h = Math.max(240, window.innerHeight || 0)
+      return { w, h }
+    }
+
+    const getPoint = (ev) => {
+      try {
+        return (ev && ev.touches && ev.touches[0]) ? ev.touches[0] : ev
+      } catch {
+        return ev
+      }
+    }
+
+    const buildChatHistoryState = (payload) => {
+      const title = String(payload?.title || '聊天记录').trim() || '聊天记录'
+      const xml = String(payload?.recordItem || '').trim()
+      const parsed = parseChatHistoryRecord(xml)
+      const info = (parsed && parsed.info) ? parsed.info : { isChatRoom: false }
+      let records = (parsed && Array.isArray(parsed.items)) ? parsed.items : []
+
+      if (!records.length) {
+        const lines = Array.isArray(payload?.fallbackLines)
+          ? payload.fallbackLines
+          : String(payload?.content || '').trim().split(/\r?\n/).map((x) => String(x || '').trim()).filter(Boolean)
+        records = lines.map((line, idx) => ({ id: String(idx), renderType: 'text', content: line, sourcename: '', sourcetime: '' }))
+      }
+
+      return { title, info, records }
+    }
+
+    const renderRecordRow = (rec, info, onOpenNested) => {
+      const row = document.createElement('div')
+      row.className = 'px-4 py-3 flex gap-3 border-b border-gray-100 bg-[#f7f7f7]'
+
+      const avatarWrap = document.createElement('div')
+      avatarWrap.className = 'w-9 h-9 rounded-md overflow-hidden bg-gray-200 flex-shrink-0'
+      const name0 = String(rec?.sourcename || '').trim() || '?'
+      const avatarUrlRaw = normalizeChatHistoryUrl(rec?.sourceheadurl)
+      const avatarLocal = (mediaIndex && mediaIndex.remote && mediaIndex.remote[avatarUrlRaw]) ? String(mediaIndex.remote[avatarUrlRaw] || '') : ''
+      const avatarUrlLower = String(avatarUrlRaw || '').trim().toLowerCase()
+      const avatarUrl = avatarLocal || ((avatarUrlLower.startsWith('http://') || avatarUrlLower.startsWith('https://')) ? avatarUrlRaw : '')
+      if (avatarUrl) {
+        const img = document.createElement('img')
+        img.src = avatarUrl
+        img.alt = '头像'
+        img.className = 'w-full h-full object-cover'
+        try { img.referrerPolicy = 'no-referrer' } catch {}
+        img.onerror = () => {
+          try { avatarWrap.textContent = '' } catch {}
+          const fb = document.createElement('div')
+          fb.className = 'w-full h-full flex items-center justify-center text-xs font-bold text-gray-600'
+          fb.textContent = String(name0.charAt(0) || '?')
+          avatarWrap.appendChild(fb)
+        }
+        avatarWrap.appendChild(img)
+      } else {
+        const fb = document.createElement('div')
+        fb.className = 'w-full h-full flex items-center justify-center text-xs font-bold text-gray-600'
+        fb.textContent = String(name0.charAt(0) || '?')
+        avatarWrap.appendChild(fb)
+      }
+
+      const main = document.createElement('div')
+      main.className = 'min-w-0 flex-1'
+
+      const header = document.createElement('div')
+      header.className = 'flex items-start gap-2'
+
+      const headerLeft = document.createElement('div')
+      headerLeft.className = 'min-w-0 flex-1'
+      const senderName = String(rec?.sourcename || '').trim()
+      if (info && info.isChatRoom && senderName) {
+        const sn = document.createElement('div')
+        sn.className = 'text-xs text-gray-500 leading-none truncate mb-1'
+        sn.textContent = senderName
+        headerLeft.appendChild(sn)
+      }
+
+      const headerRight = document.createElement('div')
+      headerRight.className = 'text-xs text-gray-400 flex-shrink-0 leading-none'
+      const timeText = String(rec?.sourcetime || '').trim()
+      headerRight.textContent = timeText
+
+      header.appendChild(headerLeft)
+      if (timeText) header.appendChild(headerRight)
+
+      const body = document.createElement('div')
+      body.className = 'mt-1'
+
+      const rt = String(rec?.renderType || 'text')
+      const content = String(rec?.content || '').trim()
+      const serverId = String(rec?.fromnewmsgid || '').trim()
+      const serverMd5 = resolveServerMd5(mediaIndex, serverId)
+
+      if (rt === 'chatHistory') {
+        const card = document.createElement('div')
+        card.className = 'wechat-chat-history-card wechat-special-card msg-radius'
+
+        const chBody = document.createElement('div')
+        chBody.className = 'wechat-chat-history-body'
+
+        const chTitle = document.createElement('div')
+        chTitle.className = 'wechat-chat-history-title'
+        chTitle.textContent = String(rec?.title || '聊天记录')
+        chBody.appendChild(chTitle)
+
+        const raw = String(rec?.content || '').trim()
+        const lines = raw ? raw.split(/\r?\n/).map((x) => String(x || '').trim()).filter(Boolean).slice(0, 4) : []
+        if (lines.length) {
+          const preview = document.createElement('div')
+          preview.className = 'wechat-chat-history-preview'
+          for (const line of lines) {
+            const el = document.createElement('div')
+            el.className = 'wechat-chat-history-line'
+            el.textContent = line
+            preview.appendChild(el)
+          }
+          chBody.appendChild(preview)
+        }
+
+        card.appendChild(chBody)
+
+        const bottom = document.createElement('div')
+        bottom.className = 'wechat-chat-history-bottom'
+        const label = document.createElement('span')
+        label.textContent = '聊天记录'
+        bottom.appendChild(label)
+        card.appendChild(bottom)
+
+        const nestedXml = String(rec?.recordItem || '').trim()
+        if (nestedXml) {
+          card.classList.add('cursor-pointer')
+          card.addEventListener('click', (ev) => {
+            try { ev.preventDefault() } catch {}
+            try { ev.stopPropagation() } catch {}
+            if (typeof onOpenNested === 'function') onOpenNested(rec)
+          })
+        }
+
+        body.appendChild(card)
+      } else if (rt === 'link') {
+        const href = normalizeChatHistoryUrl(rec?.url) || normalizeChatHistoryUrl(rec?.externurl)
+        const heading = String(rec?.title || '').trim() || content || href || '链接'
+        const desc = String(rec?.content || '').trim()
+
+        const thumbMd5 = pickFirstMd5(rec?.fullmd5, rec?.thumbfullmd5, rec?.cdnthumbmd5, rec?.md5, rec?.id)
+        let previewUrl = resolveMd5Any(mediaIndex, thumbMd5)
+        if (!previewUrl && serverMd5) previewUrl = resolveMd5Any(mediaIndex, serverMd5)
+        if (!previewUrl) previewUrl = resolveRemoteAny(mediaIndex, rec?.externurl, rec?.cdnurlstring, rec?.encrypturlstring)
+
+        const card = document.createElement(href ? 'a' : 'div')
+        card.className = 'wechat-link-card wechat-special-card msg-radius cursor-pointer'
+        if (href) {
+          card.href = href
+          card.target = '_blank'
+          card.rel = 'noreferrer noopener'
+        }
+        try { card.style.textDecoration = 'none' } catch {}
+        try { card.style.outline = 'none' } catch {}
+
+        const linkContent = document.createElement('div')
+        linkContent.className = 'wechat-link-content'
+
+        const linkInfo = document.createElement('div')
+        linkInfo.className = 'wechat-link-info'
+        const titleEl = document.createElement('div')
+        titleEl.className = 'wechat-link-title'
+        titleEl.textContent = heading
+        linkInfo.appendChild(titleEl)
+        if (desc) {
+          const descEl = document.createElement('div')
+          descEl.className = 'wechat-link-desc'
+          descEl.textContent = desc
+          linkInfo.appendChild(descEl)
+        }
+        linkContent.appendChild(linkInfo)
+
+        if (previewUrl) {
+          const thumb = document.createElement('div')
+          thumb.className = 'wechat-link-thumb'
+          const img = document.createElement('img')
+          img.src = previewUrl
+          img.alt = heading || '链接预览'
+          img.className = 'wechat-link-thumb-img'
+          try { img.referrerPolicy = 'no-referrer' } catch {}
+          thumb.appendChild(img)
+          linkContent.appendChild(thumb)
+        }
+
+        card.appendChild(linkContent)
+
+        const fromRow = document.createElement('div')
+        fromRow.className = 'wechat-link-from'
+        const fromAvatar = document.createElement('div')
+        fromAvatar.className = 'wechat-link-from-avatar'
+
+        const fromUrlRaw = normalizeChatHistoryUrl(rec?.sourceheadurl)
+        const fromLocal = (mediaIndex && mediaIndex.remote && mediaIndex.remote[fromUrlRaw]) ? String(mediaIndex.remote[fromUrlRaw] || '') : ''
+        const fromLower = String(fromUrlRaw || '').trim().toLowerCase()
+        const fromUrl = fromLocal || ((fromLower.startsWith('http://') || fromLower.startsWith('https://')) ? fromUrlRaw : '')
+        const fromText = String(rec?.sourcename || '').trim()
+        if (fromUrl) {
+          const img = document.createElement('img')
+          img.src = fromUrl
+          img.alt = ''
+          img.className = 'wechat-link-from-avatar-img'
+          try { img.referrerPolicy = 'no-referrer' } catch {}
+          img.onerror = () => {
+            try { fromAvatar.textContent = '' } catch {}
+            const span = document.createElement('span')
+            span.textContent = String(fromText ? fromText.charAt(0) : '\u200B')
+            fromAvatar.appendChild(span)
+          }
+          fromAvatar.appendChild(img)
+        } else {
+          const span = document.createElement('span')
+          span.textContent = String(fromText ? fromText.charAt(0) : '\u200B')
+          fromAvatar.appendChild(span)
+        }
+        const fromName = document.createElement('div')
+        fromName.className = 'wechat-link-from-name'
+        fromName.textContent = fromText || '\u200B'
+        fromRow.appendChild(fromAvatar)
+        fromRow.appendChild(fromName)
+        card.appendChild(fromRow)
+
+        body.appendChild(card)
+      } else if (rt === 'video') {
+        const videoMd5 = pickFirstMd5(rec?.fullmd5, rec?.md5, rec?.id)
+        const thumbMd5 = pickFirstMd5(rec?.thumbfullmd5, rec?.cdnthumbmd5) || videoMd5
+        let videoUrl = resolveMd5Any(mediaIndex, videoMd5)
+        if (!videoUrl && serverMd5) videoUrl = resolveMd5Any(mediaIndex, serverMd5)
+        if (!videoUrl) videoUrl = resolveRemoteAny(mediaIndex, rec?.externurl, rec?.cdnurlstring, rec?.encrypturlstring)
+
+        let thumbUrl = resolveMd5Any(mediaIndex, thumbMd5)
+        if (!thumbUrl && serverMd5) thumbUrl = resolveMd5Any(mediaIndex, serverMd5)
+        if (!thumbUrl) thumbUrl = resolveRemoteAny(mediaIndex, rec?.externurl, rec?.cdnurlstring, rec?.encrypturlstring)
+
+        const wrap = document.createElement('div')
+        wrap.className = 'msg-radius overflow-hidden relative bg-black/5 inline-block'
+
+        if (thumbUrl) {
+          const img = document.createElement('img')
+          img.src = thumbUrl
+          img.alt = '视频'
+          img.className = 'block w-[220px] max-w-[260px] h-auto max-h-[260px] object-cover'
+          wrap.appendChild(img)
+        } else {
+          const t = document.createElement('div')
+          t.className = 'px-3 py-2 text-sm text-gray-700'
+          t.textContent = content || '[视频]'
+          wrap.appendChild(t)
+        }
+
+        if (thumbUrl) {
+          const overlay = document.createElement(videoUrl ? 'a' : 'div')
+          if (videoUrl) {
+            overlay.href = videoUrl
+            overlay.target = '_blank'
+            overlay.rel = 'noreferrer noopener'
+          }
+          overlay.className = 'absolute inset-0 flex items-center justify-center'
+          const btn = document.createElement('div')
+          btn.className = 'w-12 h-12 rounded-full bg-black/45 flex items-center justify-center'
+          btn.innerHTML = '<svg class=\"w-6 h-6 text-white\" fill=\"currentColor\" viewBox=\"0 0 24 24\"><path d=\"M8 5v14l11-7z\"/></svg>'
+          overlay.appendChild(btn)
+          wrap.appendChild(overlay)
+        }
+
+        body.appendChild(wrap)
+      } else if (rt === 'image') {
+        const imageMd5 = pickFirstMd5(rec?.fullmd5, rec?.thumbfullmd5, rec?.cdnthumbmd5, rec?.md5, rec?.id)
+        let imgUrl = resolveMd5Any(mediaIndex, imageMd5)
+        if (!imgUrl && serverMd5) imgUrl = resolveMd5Any(mediaIndex, serverMd5)
+        if (!imgUrl) imgUrl = resolveRemoteAny(mediaIndex, rec?.externurl, rec?.cdnurlstring, rec?.encrypturlstring)
+        if (imgUrl) {
+          const outer = document.createElement('div')
+          outer.className = 'msg-radius overflow-hidden cursor-pointer inline-block'
+          const a = document.createElement('a')
+          a.href = imgUrl
+          a.target = '_blank'
+          a.rel = 'noreferrer noopener'
+          const img = document.createElement('img')
+          img.src = imgUrl
+          img.alt = '图片'
+          img.className = 'max-w-[240px] max-h-[240px] object-cover'
+          a.appendChild(img)
+          outer.appendChild(a)
+          body.appendChild(outer)
+        } else {
+          const t = document.createElement('div')
+          t.className = 'px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap break-words'
+          t.textContent = content || '[图片]'
+          body.appendChild(t)
+        }
+      } else if (rt === 'emoji') {
+        const emojiMd5 = pickFirstMd5(rec?.md5, rec?.fullmd5, rec?.thumbfullmd5, rec?.cdnthumbmd5, rec?.id)
+        let emojiUrl = resolveMd5Any(mediaIndex, emojiMd5)
+        if (!emojiUrl && serverMd5) emojiUrl = resolveMd5Any(mediaIndex, serverMd5)
+        if (!emojiUrl) emojiUrl = resolveRemoteAny(mediaIndex, rec?.externurl, rec?.cdnurlstring, rec?.encrypturlstring)
+        if (emojiUrl) {
+          const img = document.createElement('img')
+          img.src = emojiUrl
+          img.alt = '表情'
+          img.className = 'w-24 h-24 object-contain'
+          body.appendChild(img)
+        } else {
+          const t = document.createElement('div')
+          t.className = 'px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap break-words'
+          t.textContent = content || '[表情]'
+          body.appendChild(t)
+        }
+      } else {
+        const t = document.createElement('div')
+        t.className = 'px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap break-words'
+        t.textContent = content || ''
+        body.appendChild(t)
+      }
+
+      main.appendChild(header)
+      main.appendChild(body)
+
+      row.appendChild(avatarWrap)
+      row.appendChild(main)
+      return row
+    }
+
+    const focusWindow = (wrap) => {
+      zIndex += 1
+      try { wrap.style.zIndex = String(zIndex) } catch {}
+    }
+
+    const openChatHistoryWindow = (payload, opts) => {
+      const state = buildChatHistoryState(payload || {})
+      const info = state.info || { isChatRoom: false }
+      const records = Array.isArray(state.records) ? state.records : []
+
+      const vp = getViewport()
+      const width = Math.min(560, Math.max(320, Math.floor(vp.w * 0.92)))
+      const height = Math.min(560, Math.max(240, Math.floor(vp.h * 0.8)))
+
+      let x = Math.max(8, Math.floor((vp.w - width) / 2))
+      let y = Math.max(8, Math.floor((vp.h - height) / 2))
+
+      const spawnFrom = opts && opts.spawnFrom
+      if (spawnFrom) {
+        x = Number(spawnFrom.x || x) + 24
+        y = Number(spawnFrom.y || y) + 24
+      } else {
+        x += cascade
+        y += cascade
+        cascade = (cascade + 24) % 120
+      }
+
+      x = clampNumber(x, 8, Math.max(8, vp.w - width - 8))
+      y = clampNumber(y, 8, Math.max(8, vp.h - height - 8))
+
+      const win = { id: String(++idSeed), x, y, width, height }
+
+      const wrap = document.createElement('div')
+      wrap.className = 'fixed'
+      wrap.style.left = `${win.x}px`
+      wrap.style.top = `${win.y}px`
+      wrap.style.zIndex = String(++zIndex)
+
+      const box = document.createElement('div')
+      box.className = 'bg-[#f7f7f7] rounded-xl shadow-xl overflow-hidden border border-gray-200 flex flex-col'
+      box.style.width = `${win.width}px`
+      box.style.height = `${win.height}px`
+      wrap.appendChild(box)
+
+      const header = document.createElement('div')
+      header.className = 'px-3 py-2 bg-[#f7f7f7] border-b border-gray-200 flex items-center justify-between select-none cursor-move'
+      box.appendChild(header)
+
+      const titleEl = document.createElement('div')
+      titleEl.className = 'text-sm text-[#161616] truncate min-w-0'
+      titleEl.textContent = String(state.title || '聊天记录')
+      header.appendChild(titleEl)
+
+      const closeBtn = document.createElement('button')
+      closeBtn.type = 'button'
+      closeBtn.className = 'p-2 rounded hover:bg-black/5 flex-shrink-0'
+      try { closeBtn.setAttribute('aria-label', '关闭') } catch {}
+      try { closeBtn.setAttribute('title', '关闭') } catch {}
+      closeBtn.innerHTML = '<svg class=\"w-5 h-5 text-gray-700\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M6 18L18 6M6 6l12 12\"/></svg>'
+      header.appendChild(closeBtn)
+
+      const body = document.createElement('div')
+      body.className = 'flex-1 overflow-auto bg-[#f7f7f7]'
+      box.appendChild(body)
+
+      if (!records.length) {
+        const empty = document.createElement('div')
+        empty.className = 'text-sm text-gray-500 text-center py-10'
+        empty.textContent = '没有可显示的聊天记录'
+        body.appendChild(empty)
+      } else {
+        const onOpenNested = (rec) => {
+          const xml = String(rec?.recordItem || '').trim()
+          if (!xml) return
+          openChatHistoryWindow({
+            title: String(rec?.title || '聊天记录'),
+            recordItem: xml,
+            content: String(rec?.content || ''),
+          }, { spawnFrom: win })
+        }
+        for (const rec of records) {
+          try {
+            body.appendChild(renderRecordRow(rec, info, onOpenNested))
+          } catch {}
+        }
+      }
+
+      const updatePos = () => {
+        try { wrap.style.left = `${win.x}px` } catch {}
+        try { wrap.style.top = `${win.y}px` } catch {}
+      }
+
+      closeBtn.addEventListener('click', (ev) => {
+        try { ev.preventDefault() } catch {}
+        try { ev.stopPropagation() } catch {}
+        try { wrap.remove() } catch {
+          try { if (wrap.parentElement) wrap.parentElement.removeChild(wrap) } catch {}
+        }
+      })
+
+      const startDrag = (ev) => {
+        const t = ev && ev.target
+        if (t && t.closest && t.closest('button')) return
+
+        focusWindow(wrap)
+        const p0 = getPoint(ev)
+        const ox = Number(p0?.clientX || 0) - win.x
+        const oy = Number(p0?.clientY || 0) - win.y
+
+        const onMove = (e2) => {
+          const p = getPoint(e2)
+          if (!p) return
+          try { if (e2 && typeof e2.preventDefault === 'function') e2.preventDefault() } catch {}
+
+          const vp2 = getViewport()
+          const nx = Number(p.clientX || 0) - ox
+          const ny = Number(p.clientY || 0) - oy
+          win.x = clampNumber(nx, 8, Math.max(8, vp2.w - win.width - 8))
+          win.y = clampNumber(ny, 8, Math.max(8, vp2.h - win.height - 8))
+          updatePos()
+        }
+
+        const stop = () => {
+          try { document.removeEventListener('mousemove', onMove) } catch {}
+          try { document.removeEventListener('touchmove', onMove) } catch {}
+        }
+
+        try { document.addEventListener('mousemove', onMove) } catch {}
+        try { document.addEventListener('mouseup', () => stop(), { once: true }) } catch {}
+        try { document.addEventListener('touchmove', onMove, { passive: false }) } catch {}
+        try { document.addEventListener('touchend', () => stop(), { once: true }) } catch {}
+
+        try { ev.preventDefault() } catch {}
+      }
+
+      header.addEventListener('mousedown', startDrag)
+      header.addEventListener('touchstart', startDrag, { passive: false })
+
+      wrap.addEventListener('mousedown', () => focusWindow(wrap))
+      wrap.addEventListener('touchstart', () => focusWindow(wrap), { passive: true })
+
+      try { document.body.appendChild(wrap) } catch {}
+      return win
+    }
+
+    document.addEventListener('keydown', (ev) => {
+      const key = String(ev?.key || '')
+      if (key !== 'Enter' && key !== ' ') return
+      const target = ev && ev.target
+      const card = target && target.closest ? target.closest('[data-wce-chat-history=\"1\"]') : null
+      if (!card) return
+      try { ev.preventDefault() } catch {}
+      const title = String(card?.getAttribute('data-title') || '聊天记录').trim() || '聊天记录'
+      const b64 = String(card?.getAttribute('data-record-item-b64') || '').trim()
+      const xml = decodeBase64Utf8(b64)
+      const lines = Array.from(card.querySelectorAll('.wechat-chat-history-line') || [])
+        .map((el) => String(el?.textContent || '').trim())
+        .filter(Boolean)
+      openChatHistoryWindow({ title, recordItem: xml, fallbackLines: lines })
+    }, true)
+
+    document.addEventListener('click', (ev) => {
+      const target = ev && ev.target
+      const card = target && target.closest ? target.closest('[data-wce-chat-history=\"1\"]') : null
+      if (!card) return
+      try { ev.preventDefault() } catch {}
+      const title = String(card?.getAttribute('data-title') || '聊天记录').trim() || '聊天记录'
+      const b64 = String(card?.getAttribute('data-record-item-b64') || '').trim()
+      const xml = decodeBase64Utf8(b64)
+      const lines = Array.from(card.querySelectorAll('.wechat-chat-history-line') || [])
+        .map((el) => String(el?.textContent || '').trim())
+        .filter(Boolean)
+      openChatHistoryWindow({ title, recordItem: xml, fallbackLines: lines })
+    }, true)
   }
 
   document.addEventListener('DOMContentLoaded', () => {
+    hideJsMissingBanner()
     updateDprVar()
     try {
       window.addEventListener('resize', updateDprVar)
@@ -1689,7 +2231,7 @@ _HTML_EXPORT_JS = r"""
 
     initSessionSearch()
     initVoicePlayback()
-    initChatHistoryModal()
+    initChatHistoryFloatingWindows()
     initPagedMessageLoading()
 
     const select = document.getElementById('messageTypeFilter')
@@ -1708,6 +2250,9 @@ _HTML_EXPORT_JS = r"""
       })
     } catch {}
   })
+
+  // Best-effort: defer scripts execute after the DOM is parsed, so we can hide the banner immediately.
+  hideJsMissingBanner()
 })()
 """
 
@@ -2413,6 +2958,10 @@ class ChatExportManager:
                     parts.append('  <script defer src="assets/wechat-chat-export.js"></script>\n')
                     parts.append("</head>\n")
                     parts.append("<body>\n")
+                    parts.append(
+                        '  <div id="wceJsMissing" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#FEF3C7;color:#92400E;border-bottom:1px solid #F59E0B;padding:8px 12px;font-size:12px;line-height:1.4">'
+                        "提示：此页面需要 JavaScript 才能使用“合并聊天记录”等交互功能。若该提示一直存在，请确认已完整解压导出目录，并检查 wechat-chat-export.js 是否能加载（位于 assets/）。</div>\n"
+                    )
                     parts.append('<div class="wce-index">\n')
                     parts.append('  <div class="wce-index-container">\n')
                     parts.append('    <h1 class="wce-index-title">聊天记录导出（HTML）</h1>\n')
@@ -3614,7 +4163,7 @@ def _write_conversation_html(
             except Exception:
                 pass
             try:
-                u = re.sub(r"\\s+", "", u)
+                u = re.sub(r"\s+", "", u)
             except Exception:
                 pass
         if not is_http_url(u):
@@ -3992,6 +4541,10 @@ def _write_conversation_html(
             tw.write(f'  <script defer src="{esc_attr(js_src)}"></script>\n')
             tw.write("</head>\n")
             tw.write("<body>\n")
+            tw.write(
+                '  <div id="wceJsMissing" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#FEF3C7;color:#92400E;border-bottom:1px solid #F59E0B;padding:8px 12px;font-size:12px;line-height:1.4">'
+                "提示：此页面需要 JavaScript 才能使用“合并聊天记录”等交互功能。若该提示一直存在，请确认已完整解压导出目录，并检查 wechat-chat-export.js 是否能加载（位于 assets/）。</div>\n"
+            )
 
             # Root
             tw.write('<div class="wce-root h-screen flex overflow-hidden" style="background-color:#EDEDED">\n')
@@ -4144,19 +4697,19 @@ def _write_conversation_html(
             tw.write('    <div class="wce-chat-col flex-1 flex flex-col min-h-0 min-w-0">\n')
             tw.write('      <div class="flex-1 flex flex-col min-h-0 relative">\n')
 
-            tw.write('        <div class="chat-header wce-chat-header">\n')
+            tw.write('        <div class="chat-header">\n')
             tw.write('          <div class="flex items-center gap-3 min-w-0">\n')
-            tw.write(f'            <h2 class="wce-chat-title text-base font-medium text-gray-900">{esc_text(chat_title)}</h2>\n')
+            tw.write(f'            <h2 class="text-base font-medium text-gray-900">{esc_text(chat_title)}</h2>\n')
             tw.write("          </div>\n")
             tw.write('          <div class="ml-auto flex items-center gap-2">\n')
-            tw.write(f'            <select id="messageTypeFilter" class="message-filter-select wce-filter-select" title="筛选消息类型">\n')
+            tw.write(f'            <select id="messageTypeFilter" class="message-filter-select" title="筛选消息类型">\n')
             for value, label in options:
                 tw.write(f'              <option value="{esc_attr(value)}">{esc_text(label)}</option>\n')
             tw.write("            </select>\n")
             tw.write("          </div>\n")
             tw.write("        </div>\n")
 
-            tw.write('        <div id="messageContainer" class="wce-message-container flex-1 overflow-y-auto p-4 min-h-0">\n')
+            tw.write('        <div id="messageContainer" class="flex-1 overflow-y-auto p-4 min-h-0">\n')
             tw.write('          <div id="wcePager" class="wce-pager" style="display:none">\n')
             tw.write('            <button id="wceLoadPrevBtn" type="button" class="wce-pager-btn">加载更早消息</button>\n')
             tw.write('            <span id="wceLoadPrevStatus" class="wce-pager-status"></span>\n')
@@ -4909,25 +5462,6 @@ def _write_conversation_html(
                 media_index_payload = "{}"
             media_index_payload = media_index_payload.replace("</", "<\\/")
             tw.write(f'<script type="application/json" id="wceMediaIndex">{media_index_payload}</script>\n')
-
-            tw.write(
-                '<div id="chatHistoryModal" class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center hidden" style="display:none" aria-hidden="true">\n'
-            )
-            tw.write('  <div class="w-[92vw] max-w-[560px] max-h-[80vh] bg-white rounded-xl shadow-xl overflow-hidden flex flex-col" role="dialog" aria-modal="true">\n')
-            tw.write('    <div class="px-4 py-3 bg-neutral-100 border-b border-gray-200 flex items-center justify-between">\n')
-            tw.write('      <div id="chatHistoryModalTitle" class="text-sm text-[#161616] truncate">聊天记录</div>\n')
-            tw.write('      <button type="button" id="chatHistoryModalClose" class="p-2 rounded hover:bg-black/5" aria-label="关闭" title="关闭">\n')
-            tw.write('        <svg class="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">\n')
-            tw.write('          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>\n')
-            tw.write("        </svg>\n")
-            tw.write("      </button>\n")
-            tw.write("    </div>\n")
-            tw.write('    <div class="flex-1 overflow-auto bg-white">\n')
-            tw.write('      <div id="chatHistoryModalEmpty" class="text-sm text-gray-500 text-center py-10">没有可显示的聊天记录</div>\n')
-            tw.write('      <div id="chatHistoryModalList"></div>\n')
-            tw.write("    </div>\n")
-            tw.write("  </div>\n")
-            tw.write("</div>\n")
 
             tw.write("</body>\n")
             tw.write("</html>\n")
