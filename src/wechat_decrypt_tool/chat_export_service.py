@@ -53,7 +53,7 @@ from .chat_helpers import (
 )
 from .logging_config import get_logger
 from .media_helpers import (
-    _convert_silk_to_wav,
+    _convert_silk_to_browser_audio,
     _detect_image_media_type,
     _fallback_search_media_by_file_id,
     _read_and_maybe_decrypt_media,
@@ -121,9 +121,10 @@ def _resolve_ui_public_dir() -> Optional[Path]:
     if ui_dir_env:
         candidates.append(Path(ui_dir_env))
 
-    # Repo default: `frontend/.output/public` after `npm --prefix frontend run generate`.
+    # Repo defaults: generated Nuxt output or checked-in desktop UI assets.
     repo_root = Path(__file__).resolve().parents[2]
     candidates.append(repo_root / "frontend" / ".output" / "public")
+    candidates.append(repo_root / "desktop" / "resources" / "ui")
 
     for p in candidates:
         try:
@@ -621,6 +622,68 @@ body { background: #EDEDED; }
 .wce-audio-actions { margin-top: 6px; }
 .wce-audio-actions a { font-size: 0.75rem; color: #07c160; text-decoration: none; }
 .wce-audio-actions a:hover { text-decoration: underline; }
+
+/* Voice message fallback styles (keep close to `frontend/pages/chat/[[username]].vue`). */
+.wechat-voice-wrapper { display: flex; width: 100%; position: relative; }
+.wechat-voice-bubble {
+  border-radius: var(--message-radius);
+  position: relative;
+  transition: opacity 0.15s ease;
+  min-width: 80px;
+  max-width: 200px;
+  cursor: pointer;
+}
+.wechat-voice-bubble:hover { opacity: 0.85; }
+.wechat-voice-bubble:active { opacity: 0.7; }
+.wechat-voice-sent { background: #95EC69; }
+.wechat-voice-sent::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -4px;
+  transform: translateY(-50%) rotate(45deg);
+  width: 10px;
+  height: 10px;
+  background: #95EC69;
+  border-radius: 2px;
+}
+.wechat-voice-received { background: #fff; }
+.wechat-voice-received::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -4px;
+  transform: translateY(-50%) rotate(45deg);
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border-radius: 2px;
+}
+.wechat-voice-content { display: flex; align-items: center; padding: 8px 12px; gap: 8px; }
+.wechat-voice-icon { width: 18px; height: 18px; flex-shrink: 0; color: #1a1a1a; }
+.wechat-quote-voice-icon { width: 14px; height: 14px; color: inherit; }
+.voice-icon-sent { transform: scaleX(-1); }
+.wechat-voice-icon.voice-playing .voice-wave-2 { animation: voice-wave-2 1s infinite; }
+.wechat-voice-icon.voice-playing .voice-wave-3 { animation: voice-wave-3 1s infinite; }
+@keyframes voice-wave-2 {
+  0%, 33% { opacity: 0; }
+  34%, 100% { opacity: 1; }
+}
+@keyframes voice-wave-3 {
+  0%, 66% { opacity: 0; }
+  67%, 100% { opacity: 1; }
+}
+.wechat-voice-duration { font-size: 14px; color: #1a1a1a; }
+.wechat-voice-unread {
+  position: absolute;
+  top: 50%;
+  right: -20px;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e75e58;
+}
 
 /* Index page helpers. */
 .wce-index { min-height: 100vh; background: #EDEDED; }
@@ -4958,40 +5021,38 @@ def _write_conversation_html(
                         tw.write(f'                  <div class="{esc_attr(bubble_base_cls + " " + bubble_dir_cls)}">{render_text_with_emojis(msg.get("content") or "")}</div>\n')
                 elif rt == "voice":
                     voice = offline_path(msg, "voice")
-                    if voice:
-                        duration_ms = msg.get("voiceLength")
-                        width = get_voice_width(duration_ms)
-                        seconds = get_voice_duration_in_seconds(duration_ms)
-                        voice_dir_cls = "wechat-voice-sent" if is_sent else "wechat-voice-received"
-                        content_dir_cls = " flex-row-reverse" if is_sent else ""
-                        icon_dir_cls = "voice-icon-sent" if is_sent else "voice-icon-received"
-                        voice_id = str(msg.get("id") or "").strip()
+                    duration_ms = msg.get("voiceLength")
+                    width = get_voice_width(duration_ms)
+                    seconds = get_voice_duration_in_seconds(duration_ms)
+                    voice_dir_cls = "wechat-voice-sent" if is_sent else "wechat-voice-received"
+                    content_dir_cls = " flex-row-reverse" if is_sent else ""
+                    icon_dir_cls = "voice-icon-sent" if is_sent else "voice-icon-received"
+                    voice_id = str(msg.get("id") or "").strip()
 
-                        tw.write('                  <div class="wechat-voice-wrapper">\n')
-                        tw.write(
-                            f'                    <div class="wechat-voice-bubble msg-radius {esc_attr(voice_dir_cls)}" style="width: {esc_attr(width)}" data-voice-id="{esc_attr(voice_id)}">\n'
-                        )
-                        tw.write(f'                      <div class="wechat-voice-content{esc_attr(content_dir_cls)}">\n')
-                        tw.write(
-                            f'                        <svg class="wechat-voice-icon {esc_attr(icon_dir_cls)}" viewBox="0 0 32 32" fill="currentColor">\n'
-                        )
-                        tw.write(
-                            '                          <path d="M10.24 11.616l-4.224 4.192 4.224 4.192c1.088-1.056 1.76-2.56 1.76-4.192s-0.672-3.136-1.76-4.192z"></path>\n'
-                        )
-                        tw.write(
-                            '                          <path class="voice-wave-2" d="M15.199 6.721l-1.791 1.76c1.856 1.888 3.008 4.48 3.008 7.328s-1.152 5.44-3.008 7.328l1.791 1.76c2.336-2.304 3.809-5.536 3.809-9.088s-1.473-6.784-3.809-9.088z"></path>\n'
-                        )
-                        tw.write(
-                            '                          <path class="voice-wave-3" d="M20.129 1.793l-1.762 1.76c3.104 3.168 5.025 7.488 5.025 12.256s-1.921 9.088-5.025 12.256l1.762 1.76c3.648-3.616 5.887-8.544 5.887-14.016s-2.239-10.432-5.887-14.016z"></path>\n'
-                        )
-                        tw.write("                        </svg>\n")
-                        tw.write(f'                        <span class="wechat-voice-duration">{esc_text(seconds)}"</span>\n')
-                        tw.write("                      </div>\n")
-                        tw.write("                    </div>\n")
+                    tw.write('                  <div class="wechat-voice-wrapper">\n')
+                    tw.write(
+                        f'                    <div class="wechat-voice-bubble msg-radius {esc_attr(voice_dir_cls)}" style="width: {esc_attr(width)}" data-voice-id="{esc_attr(voice_id)}">\n'
+                    )
+                    tw.write(f'                      <div class="wechat-voice-content{esc_attr(content_dir_cls)}">\n')
+                    tw.write(
+                        f'                        <svg class="wechat-voice-icon {esc_attr(icon_dir_cls)}" viewBox="0 0 32 32" fill="currentColor">\n'
+                    )
+                    tw.write(
+                        '                          <path d="M10.24 11.616l-4.224 4.192 4.224 4.192c1.088-1.056 1.76-2.56 1.76-4.192s-0.672-3.136-1.76-4.192z"></path>\n'
+                    )
+                    tw.write(
+                        '                          <path class="voice-wave-2" d="M15.199 6.721l-1.791 1.76c1.856 1.888 3.008 4.48 3.008 7.328s-1.152 5.44-3.008 7.328l1.791 1.76c2.336-2.304 3.809-5.536 3.809-9.088s-1.473-6.784-3.809-9.088z"></path>\n'
+                    )
+                    tw.write(
+                        '                          <path class="voice-wave-3" d="M20.129 1.793l-1.762 1.76c3.104 3.168 5.025 7.488 5.025 12.256s-1.921 9.088-5.025 12.256l1.762 1.76c3.648-3.616 5.887-8.544 5.887-14.016s-2.239-10.432-5.887-14.016z"></path>\n'
+                    )
+                    tw.write("                        </svg>\n")
+                    tw.write(f'                        <span class="wechat-voice-duration">{esc_text(seconds)}"</span>\n')
+                    tw.write("                      </div>\n")
+                    tw.write("                    </div>\n")
+                    if voice:
                         tw.write(f'                    <audio src="{esc_attr(voice)}" preload="none" class="hidden"></audio>\n')
-                        tw.write("                  </div>\n")
-                    else:
-                        tw.write(f'                  <div class="{esc_attr(bubble_base_cls + " " + bubble_dir_cls)}">{render_text_with_emojis(msg.get("content") or "")}</div>\n')
+                    tw.write("                  </div>\n")
                 elif rt == "file":
                     fsrc = offline_path(msg, "file")
                     title = str(msg.get("title") or msg.get("content") or "文件").strip()
@@ -5982,13 +6043,9 @@ def _materialize_voice(
     if not isinstance(data, (bytes, bytearray)):
         data = bytes(data)
 
-    wav = _convert_silk_to_wav(data)
-    if wav != data and wav[:4] == b"RIFF":
-        ext = "wav"
-        payload = wav
-    else:
-        ext = "silk"
-        payload = data
+    payload, ext, _media_type = _convert_silk_to_browser_audio(data, preferred_format="mp3")
+    if not payload:
+        return "", False
 
     arc = f"media/voices/voice_{int(server_id)}.{ext}"
     zf.writestr(arc, payload)
