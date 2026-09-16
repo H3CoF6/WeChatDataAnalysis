@@ -1138,6 +1138,13 @@ def _load_native_core_build_manifest(
             raise NativeCoreProtocolError(
                 "Linux wechatdb native content-hash pins must be non-zero."
             )
+        # 两侧 pin 兼做进程互认的参照物，撞哈希就失去了区分能力：producer 的
+        # Test-LinuxNativeProductionArtifact.py 与消费侧的 linux-native-core-packaging.cjs
+        # 都断言了这一点，这里必须同样拒绝。
+        if not development_build and linux_client_sha256 == linux_broker_sha256:
+            raise NativeCoreProtocolError(
+                "Linux wechatdb native content-hash pins must be distinct."
+            )
         linux_peer_verification = payload.get("linuxPeerVerification")
         if linux_peer_verification != "same-user-peer-credentials":
             raise NativeCoreProtocolError(
@@ -1485,28 +1492,28 @@ def _required_native_core_build_manifest(
         )
     frozen = bool(getattr(sys, "frozen", False))
     if manifest.platform == "linux":
-        # Linux 目前没有安装包/冻结应用（release.yml 只做 Windows/macOS），所以唯一
-        # 受支持的消费方式是公开源码 checkout 使用 source-public native core——
-        # 与 Windows/macOS "源码 checkout 只接受受限 source-public" 同一原则。
-        if not frozen and _is_source_public_native_core_build_manifest(manifest):
-            from .native_core_lease import validate_native_core_authorization_policy
+        from .native_core_lease import validate_native_core_authorization_policy
 
+        # Linux 没有代码签名，身份是内容哈希 pin + 直接父进程的宿主校验；发布工作流发的
+        # 就是这一份受限 source-public 产物（linux-private-build.yml 只收 source-public）。
+        # 所以冻结应用必须消费 source-public —— 与 Windows 同一原则（Windows 的发布形态
+        # 同样是受限 source-public）。macOS 走真正的签名 production，冻结态仍只认 production。
+        if frozen and (
+            _is_production_native_core_build_manifest(manifest)
+            or _is_source_public_native_core_build_manifest(manifest)
+        ):
             validate_native_core_authorization_policy(manifest)
             return manifest
-        if frozen and manifest.source_runtime:
-            raise NativeCoreProtocolError(
-                "Frozen WeChatDataAnalysis rejects the source-public Linux native core."
-            )
+        # 源码 checkout 只接受受限 source-public；production 与 dev-local 都不授权
+        # （与 macOS 同一原则）。
+        if not frozen and _is_source_public_native_core_build_manifest(manifest):
+            validate_native_core_authorization_policy(manifest)
+            return manifest
         if not frozen:
             raise NativeCoreProtocolError(
                 "Source WeChatDataAnalysis on Linux requires the exact restricted "
                 "source-public native core."
             )
-        if _is_production_native_core_build_manifest(manifest):
-            from .native_core_lease import validate_native_core_authorization_policy
-
-            validate_native_core_authorization_policy(manifest)
-            return manifest
         raise NativeCoreProtocolError(
             "Frozen WeChatDataAnalysis requires a production wechatdb native core."
         )

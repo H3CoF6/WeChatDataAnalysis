@@ -34,6 +34,16 @@ Linux 与 Windows / macOS 一起发在同一个 tag Release 里，并且是**必
    | variable | `WCE_LINUX_NATIVE_CORE_CLIENT_SHA256` / `..._BROKER_SHA256` | 可选的内容 pin；一旦填就必须与 manifest 一致 |
    | variable | `WCE_LINUX_INTEGRITY_SOURCE_REPOSITORY` / `..._SOURCE_REVISION` | 可选；默认取原生核心的仓库/revision（`private/wce_integrity` 在同一棵树里） |
    | secret | `WCE_LINUX_PRODUCER_READ_TOKEN` | 对 producer 仓有读权限的 token（资产下载 + 取 integrity 源码） |
+
+   Linux 只需要上面这一个 secret：没有代码签名，所以不需要任何私钥 / 证书 / 时间戳
+   相关的 secret（Windows 的 PFX、macOS 的 P12 那套在 Linux 上都不存在）。
+
+   注意 `build-linux-x64` 是 `release.yml` 用 `secrets: inherit` 调起来的，而 reusable
+   workflow **不会**继承调用方的 *environment* 级 secret。Windows / macOS 的 job 各自
+   声明了 `environment:`（`windows-private-pki-production` / `macos-private-pki-production`），
+   Linux 没有可保护的签名材料，因此**刻意不声明 environment**：`WCE_LINUX_PRODUCER_READ_TOKEN`
+   必须建在**仓库级** secret 上，否则 `test -n "$GH_TOKEN"` 会直接失败。
+
 3. **发版**：推 tag `v*`。tag 必须在 `origin/main` 上。
 
 ## 为什么可以不做代码签名
@@ -63,10 +73,34 @@ WES2 sidecar。之所以不在 producer 侧预编，是因为 `wce_integrity` �
 - **产物名不能重**：Linux 用 `SHA256SUMS-linux.txt` / `release-provenance-linux.json`，
   避免与 Windows 的 `SHA256SUMS.txt` / `release-provenance.json` 在 `merge-multiple` 下载时互相覆盖。
 
-## 已知缺口（发版前必须处理）
+## 桌面运行时的 Linux 判定（已修，别再回退）
 
-`desktop/src/native-core-runtime.cjs` 目前只认 `win32` / `darwin`：在 Linux 上
-`resolveNativeCoreRuntimePolicy()` 会抛 `unsupported on platform: linux`，而它由
-`startBackend()` 无保护调用 —— 即打出来的 Linux 包**启动后端就会失败**。
-`desktop/tests/native-core-runtime.test.cjs` 在 Linux 上因此跑不过，所以没有进
-`build-linux-x64` 的桌面测试门禁。在修好之前，Linux 的 release 只是「能出包」，不是「能用」。
+`desktop/src/native-core-runtime.cjs` 现在完整支持 Linux 的 schema v4，规则和
+Windows / macOS 对齐：
+
+| 运行形态 | 接受的产物 | 说明 |
+| --- | --- | --- |
+| 打包（冻结） | production 或受限 source-public | 与 Windows 同一原则：发布工作流发的就是 source-public |
+| 源码 checkout | 只接受受限 source-public | 与 macOS 同一原则（`dev-local` 不授权） |
+
+Linux 没有代码签名，身份 = `linuxClientSha256` / `linuxBrokerSha256` 两组内容哈希
+pin；`linuxHostVerification` 必须与 `sourceRuntime` 配对（源码分发 = 直接父进程，
+其余 = 内容哈希 pin），且 Linux 清单不得夹带任何 Windows / macOS 的签名身份字段。
+这四条在**两侧**都要成立，缺一就会出现「桌面放行、后端拒绝」的半可用状态：
+
+- 桌面：`desktop/src/native-core-runtime.cjs` + `desktop/tests/native-core-runtime.test.cjs`
+- 后端：`src/wechat_decrypt_tool/native_core_client.py` + `tests/test_linux_native_core_policy.py`
+
+两条都被 `build-linux-x64` 当门禁跑，所以「能出包」和「能用」之间不再有缝。
+
+## 还没做的验证
+
+- **没有 GUI 冒烟**：Windows 有 `smoke:win`、macOS 有 `smoke:mac`，Linux 侧只有
+  「打包产物上的原生核心策略判定」（`Verify the packaged Linux runtime` 步骤）加
+  `install.sh` 的摘要校验，没有真的启动过界面。
+- **Ubuntu 24.04 的沙箱限制**：用户级安装没法给 `chrome-sandbox` 置 setuid root，
+  而 24.04 起 AppArmor 会限制非特权 user namespace —— 真机验证时若起不来，优先查
+  这一条（需要 AppArmor profile 或 `--no-sandbox` 的取舍）。
+- **`dev-local` 在 Linux 上不授权**：本地自建开发核心（`WCE_DEVELOPMENT_BUILD=ON`
+  产出的 `linuxIntegrityMode: development` 清单）不会被后端接受，本地联调需要用
+  producer 产的 source-public 产物（与 macOS 现状一致）。

@@ -420,8 +420,14 @@ test("Linux release workflow consumes the pinned native core and publishes the u
   assert.match(job, /native\/wce_integrity\/Cargo\.toml/);
   assert.doesNotMatch(job, /cargo build/);
   assert.match(job, /tests\/test_linux_db_key_flow\.py/);
+  assert.match(job, /tests\/test_linux_native_core_policy\.py/);
   assert.doesNotMatch(job, /test_wcdb_realtime_native_core_required\.py/);
   assert.doesNotMatch(job, /test_native_core_broker_lifecycle\.py/);
+  // 桌面门禁必须覆盖「启动后端」那一步的策略判定：曾经它只认 win32/darwin，
+  // 于是 Linux 包能出包、一启动就崩。
+  assert.match(job, /tests\/native-core-runtime\.test\.cjs/);
+  assert.match(job, /resolveNativeCoreRuntimePolicy/);
+  assert.match(job, /WECHAT_TOOL_NATIVE_CORE_MODE/);
   assert.match(job, /npm run dist:linux/);
   assert.match(job, /differs from the reviewed native artifact/);
   assert.match(job, /linuxContentPinErrors/);

@@ -160,7 +160,12 @@ jobs:
           GH_TOKEN: ${{ secrets.WCE_LINUX_PRODUCER_READ_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "$GH_TOKEN"
+          # 与 Windows 的 native-artifact 步骤同一条错误提示：secret 缺失时给出可执行的信息，
+          # 而不是一个裸的 test 失败（Linux 没有 environment，所以它必须是仓库级 secret）。
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "WCE_LINUX_PRODUCER_READ_TOKEN is required to download the private native Release." >&2
+            exit 1
+          fi
           artifact_dir="$RUNNER_TEMP/wechatdb-native-linux-x64-source-public"
           release_tag="linux-native-$WCE_NATIVE_CORE_BUILD_ID"
           release_asset="wechatdb-native-linux-x64-source-public-$WCE_NATIVE_CORE_BUILD_ID.tar.gz"
@@ -170,8 +175,12 @@ jobs:
             rm -rf "$artifact_dir"
             mkdir -p "$artifact_dir"
             rm -f "$release_archive"
-            # 首选不可变 Release 资产（并核对 pin 过的摘要），退路是精确 run id 的
-            # 工作流产物。两条路都必须落在同一份五元组上。
+            # 首选不可变 Release 资产（核对 pin 过的 tar.gz 摘要），退路是精确 run id
+            # 的工作流产物。退路拿不到 tar.gz，所以它靠 workflow 产物内部的
+            # provenance.json / SHA256SUMS.txt / manifest 落到同一份五元组上：
+            # run id、revision、build id 与两组内容哈希 pin 都会被
+            # resolveLinuxNativeCoreArtifacts 重新核对，未被核对过的只剩 tar.gz
+            # 这个外层封装的摘要本身。
             if [[ -n "$LINUX_NATIVE_DOWNLOAD_REPOSITORY" ]] && \
               gh release download "$release_tag" \
                 --repo "$LINUX_NATIVE_DOWNLOAD_REPOSITORY" \
@@ -226,7 +235,10 @@ jobs:
           GH_TOKEN: ${{ secrets.WCE_LINUX_PRODUCER_READ_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "$GH_TOKEN"
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "WCE_LINUX_PRODUCER_READ_TOKEN is required to fetch the pinned private integrity source." >&2
+            exit 1
+          fi
           # wce_integrity 把 Nuxt 的 CSS 编进导出物里，所以它必须在 UI 构建之后、
           # 在同一个工作目录里编译（macOS 那份 prebuilt dylib 之所以要记
           # uiSourceRevision，就是因为这个耦合）。这里改为按 revision 取源码，
@@ -266,9 +278,12 @@ jobs:
           # 只跑在 Linux 上成立的用例：Windows 专属的原生核心用例（
           # test_wcdb_realtime_native_core_required / test_native_core_broker_lifecycle）
           # 依赖 win32 的 PE 与 trust-mode 语义，在这里必然失败，不应作为门禁。
+          # test_linux_native_core_policy.py 钉住 Linux 的授权矩阵：冻结应用必须接受
+          # 发布工作流实际发的 source-public 产物（与 Windows 同一原则）。
           uv run pytest -q \
             tests/test_linux_db_key_flow.py \
             tests/test_linux_db_key_frontend.py \
+            tests/test_linux_native_core_policy.py \
             tests/test_native_core_device_credential.py
 
       - name: Run focused desktop release tests
@@ -276,10 +291,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # 只跑与 Linux 打包契约直接相关的用例。windows-* 那几个与
-          # native-core-runtime（它至今只认 win32/darwin）在 Linux 上必然失败，
-          # 不能当门禁：后者的修复见 docs/linux-release.md 的「已知缺口」。
+          # 只跑与 Linux 打包契约直接相关的用例。windows-* 那几个在 Linux 上必然
+          # 失败（依赖 PE 与 Windows trust-mode 语义），不能当门禁。
+          # native-core-runtime 是桌面启动后端的门禁：Linux 的 schema v4 判定错了，
+          # 打出来的包一启动就会崩，所以它必须在这里跑。
           node --test \
+            tests/native-core-runtime.test.cjs \
             tests/native-core-packaging.test.cjs \
             tests/native-core-before-pack.test.cjs \
             tests/package-config.test.cjs
@@ -356,6 +373,31 @@ jobs:
           }
           if (manifest.buildExpiresAtUnix * 1000 <= Date.now()) {
             throw new Error("packaged native core build window has already expired");
+          }
+
+          // 桌面应用启动后端时要走的同一条策略判定，必须在**打包后的产物**上通过：
+          // 这里是「装完能用」的唯一自动化门禁（Release 发布前就拦下 schema 漂移）。
+          const { resolveNativeCoreRuntimePolicy, applyNativeCoreRuntimePolicy } =
+            require("./src/native-core-runtime.cjs");
+          const packagedPolicy = resolveNativeCoreRuntimePolicy({
+            env: {},
+            isPackaged: true,
+            nativeDir,
+            platform: "linux",
+          });
+          if (packagedPolicy.mode !== "required" || packagedPolicy.artifactState !== "production") {
+            throw new Error(
+              `packaged native core did not resolve a required production runtime policy: ${JSON.stringify({ mode: packagedPolicy.mode, artifactState: packagedPolicy.artifactState })}`
+            );
+          }
+          const backendEnv = {};
+          applyNativeCoreRuntimePolicy(backendEnv, {
+            isPackaged: true,
+            nativeDir,
+            platform: "linux",
+          });
+          if (backendEnv.WECHAT_TOOL_NATIVE_CORE_MODE !== "required") {
+            throw new Error("packaged native core did not enforce the required native-core mode");
           }
 
           // ELF 身份：客户端/完整性模块是共享对象，broker 是 x86-64 可执行文件。
