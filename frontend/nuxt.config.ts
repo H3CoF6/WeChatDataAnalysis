@@ -1,7 +1,7 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import { fileURLToPath } from 'node:url'
 import { searchForWorkspaceRoot } from 'vite'
-import { assistantUiAliases } from './lib/assistant-ui-aliases'
+import tailwindcss from '@tailwindcss/vite'
 import {
   FIRST_USE_AGREEMENT_STORAGE_KEY,
   FIRST_USE_AGREEMENT_VERSION,
@@ -60,8 +60,9 @@ export default defineNuxtConfig({
   // 并让 dev server 额外放行 website/assets（保留 Vite 默认推断的工作区根，不把整个仓库暴露给 /@fs/）
   vite: {
     ssr: { noExternal: ['@assistant-ui/core', '@assistant-ui/store', '@assistant-ui/tap', '@assistant-ui/vue'] },
+    plugins: [tailwindcss()],
     resolve: {
-      alias: [...assistantUiAliases, { find: '@website', replacement: websiteAssetsDir }]
+      alias: [{ find: '@website', replacement: websiteAssetsDir }]
     },
     server: {
       fs: {
@@ -72,6 +73,7 @@ export default defineNuxtConfig({
 
   // 应用配置
   css: [
+    '~/assets/css/tailwind.css',
     '@fortawesome/fontawesome-free/css/all.min.css',
     '~/assets/css/chat.css',
     '~/assets/css/record-pages.css',
@@ -103,23 +105,13 @@ export default defineNuxtConfig({
   
   // 模块配置
   modules: [
-    '@nuxtjs/tailwindcss',
     '@pinia/nuxt'
   ],
 
   // 启用组件自动导入
   components: [
-    { path: '~/components', pathPrefix: false }
+    { path: '~/components', pathPrefix: false,
+      ignore: ['ai-elements/**'] }
   ],
   
-  // Tailwind配置
-  tailwindcss: {
-    cssPath: ['~/assets/css/tailwind.css', { injectPosition: "first" }],
-    configPath: 'tailwind.config',
-    exposeConfig: {
-      level: 2
-    },
-    config: {},
-    viewer: true
-  }
 })

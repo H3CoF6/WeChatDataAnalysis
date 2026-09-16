@@ -781,7 +781,7 @@ const desktopVersionText = computed(() => {
   return v || '—'
 })
 
-const desktopDefaultToChatWhenData = ref(false)
+const desktopDefaultToChatWhenData = ref(true)
 
 const cdnImageEnabled = ref(false)
 const cdnImageLoading = ref(false)
@@ -1110,7 +1110,12 @@ const scrollToFocusTarget = async () => {
     scrollToSection('voice')
     return
   }
-  if (focusTarget !== 'log-file') return
+  if (focusTarget !== 'log-file') {
+    // 弹窗重新挂载后滚动区回到顶部，同步栏目标题，避免沿用上次高亮。
+    await nextTick()
+    onContentScroll()
+    return
+  }
   await nextTick()
   activeSection.value = 'desktop'
   const scrollHost = contentScrollRef.value
@@ -2191,7 +2196,7 @@ onMounted(async () => {
     }
   }
 
-  desktopDefaultToChatWhenData.value = readLocalBoolSetting(DESKTOP_SETTING_DEFAULT_TO_CHAT_KEY, false)
+  desktopDefaultToChatWhenData.value = readLocalBoolSetting(DESKTOP_SETTING_DEFAULT_TO_CHAT_KEY, true)
   snsUseCache.value = readLocalBoolSetting(SNS_SETTING_USE_CACHE_KEY, true)
   void loadCdnImageStatus()
 

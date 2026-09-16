@@ -572,6 +572,8 @@ jobs:
       - name: Run focused desktop release tests
         working-directory: desktop
         shell: pwsh
+        env:
+          WDA_REQUIRE_NSIS_TEST: "1"
         run: |
           node --test `
             tests/desktop-settings.test.cjs `
