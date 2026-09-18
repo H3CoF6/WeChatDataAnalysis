@@ -99,7 +99,7 @@
           <div class="flex-1 min-w-0">
             <div class="truncate" :class="{ 'privacy-blur': privacyMode }">{{ u.displayName || u.username }}</div>
             <div class="text-[11px] text-gray-400 truncate">
-              <span>{{ u.username }}</span>
+              <span :class="{ 'privacy-blur': privacyMode }">{{ u.username }}</span>
               <span> · </span>
               <!-- `postCount` is computed from the decrypted sqlite snapshot (cache). The timeline API may only return
                    the visible subset (e.g. privacy setting: "only last 3 days"), so show loaded/cache for the selected user. -->
@@ -1123,9 +1123,9 @@
     <GuideDialog
       :open="publishUnavailableDialogOpen"
       eyebrow="功能暂未开放"
-      title="请添加 QQ 联系开发者"
+      :title="DEVELOPER_CONTACT_TITLE"
       :description="FEATURE_UNAVAILABLE_MESSAGE"
-      primary-label="添加 QQ 3434549571"
+      :primary-label="DEVELOPER_CONTACT_LABEL"
       secondary-label="关闭"
       tone="warning"
       @primary="contactDeveloper"
@@ -1137,7 +1137,7 @@
 
 <script setup>
 import { storeToRefs } from 'pinia'
-import { FEATURE_UNAVAILABLE_MESSAGE, openDeveloperContact } from '~/lib/developer-support'
+import { DEVELOPER_CONTACT_LABEL, DEVELOPER_CONTACT_TITLE, FEATURE_UNAVAILABLE_MESSAGE, openDeveloperContact } from '~/lib/developer-support'
 import { useChatAccountsStore } from '~/stores/chatAccounts'
 import { usePrivacyStore } from '~/stores/privacy'
 import { parseTextWithEmoji } from '~/lib/wechat-emojis'

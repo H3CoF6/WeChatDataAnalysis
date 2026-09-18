@@ -1,7 +1,7 @@
 {
   "name": "wechat-data-analysis-desktop",
   "private": true,
-  "version": "2.5.1",
+  "version": "2.6.0",
   "main": "src/main.cjs",
   "scripts": {
     "dev": "node scripts/dev.cjs",
@@ -86,13 +86,6 @@
           "macos-private-pki-root.cer",
           "windows-private-pki-root.cer",
           "windows-private-pki.ps1"
-        ]
-      },
-      {
-        "from": "resources/qq-feedback",
-        "to": "qq-feedback",
-        "filter": [
-          "win32-x64/nt_helper.node"
         ]
       },
       {
